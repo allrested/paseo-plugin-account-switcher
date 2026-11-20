@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import type { PaseoApi } from "./paseo-api";
 import { AccountSchema, missingCli, type LoginSession, type Provider } from "../shared/contracts";
 import { AccountStore, accountFrom, boundAccount, type Registry, type StoredAccount, type StoredBinding } from "./store";
+import { gatewayEnvironment, linkedCredentialHome, validateLinkedProfile } from "./claude-profiles";
 import { prepareProfile } from "./profiles";
 import { accountCommand, accountEnvironment, launchLogin, probeAccount, removeAccountCredentials } from "./auth";
 import { installIntegration, restoreIntegration, writeLaunchers, prepareRuntime, reconcileIntegration } from "./integration";
@@ -152,6 +153,7 @@ export class AccountController {
   if(id===null){await this.store.change(r=>{r.defaults[provider]=null;});return;}
   const before=await this.store.read(),account=accountFrom(before,id);
   if(account.provider!==provider)throw new Error("The account belongs to another provider.");
+  if(account.source==="gateway")throw new Error("Select a gateway explicitly for each agent.");
   if(account.loginToken)throw new Error("Account sign-in is still in progress.");
   const checked=await this.checkAccount(id);
   if(checked.authStatus!=="ready")throw new Error("Sign in and verify authentication before making this the default account.");
@@ -165,6 +167,8 @@ export class AccountController {
    const state=await this.store.read(), account=accountFrom(state,id);
    if(!state.available[account.provider])throw new Error(missingCli(account.provider));
    if(account.loginToken)throw new Error("Finish signing in, then click “Check sign-in”.");
+   if(account.source==="gateway"){await gatewayEnvironment(this.store.root,account);return account;}
+   if(account.source==="linked")await validateLinkedProfile(linkedCredentialHome(account));
    let identity:Awaited<ReturnType<typeof probeAccount>>;
    let stableVersion:string|undefined;
    if(verifyCredentials){
@@ -201,9 +205,16 @@ export class AccountController {
   await this.reconcileLogins();
   const initial=await this.store.read();
   const target=initial.accounts.find(account=>account.id===input.verifyAccountId);
-  if(target&&initial.available[target.provider]&&initial.commands[target.provider]&&!target.loginToken)await this.checkAccount(target.id,true).catch(()=>{this.credentialProofs.delete(target.id);});
+  if(target&&target.source!=="gateway"&&initial.available[target.provider]&&initial.commands[target.provider]&&!target.loginToken)await this.checkAccount(target.id,true).catch(()=>{this.credentialProofs.delete(target.id);});
   const state=await this.store.read();
-  return state.accounts.filter(a=>state.available[a.provider]&&state.commands[a.provider]&&!a.loginToken).map(account=>this.toQuotaAccount(account,state));
+  const accounts = state.accounts.filter(a => a.source !== "gateway" && state.available[a.provider] && state.commands[a.provider] && !a.loginToken);
+  const allowed = await Promise.all(accounts.map(async account => {
+    if (account.source === "linked") {
+      try { await validateLinkedProfile(linkedCredentialHome(account)); } catch { return []; }
+    }
+    return [this.toQuotaAccount(account,state)];
+  }));
+  return allowed.flat();
  }
  private toQuotaAccount(account:StoredAccount,state:Registry):QuotaAccount {
    const env=accountEnvironment(account,state);
@@ -340,7 +351,7 @@ export class AccountController {
     try{if(!(await lstat(parent)).isDirectory()||await realpath(parent)!==join(root,directory))throw new Error("The plugin directory has been redirected; cleanup was refused.");paths.push(join(parent,name));}
     catch(error){if((error as NodeJS.ErrnoException).code!=="ENOENT")throw error;}
    }
-   await removeAccountCredentials(account,state);
+   if(account.source==="managed")await removeAccountCredentials(account,state);
    for(const path of paths)await rm(path,{recursive:true,force:true});
   });
   await this.usage.invalidate(id);

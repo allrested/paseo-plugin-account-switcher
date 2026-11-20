@@ -2,6 +2,12 @@ Account Switcher lets you use several Claude and ChatGPT/Codex subscription acco
 
 Limits cover every window the provider reports, such as 5-hour and weekly use, with reset times. Codex usage-based workspace plans show their monthly credits, and Claude enterprise seats show their monthly spend allowance.
 
+## Claude gateways and local profiles
+
+Under **Accounts → Claude**, use **Add gateway** to save a named endpoint and bearer API token. Select that gateway for an agent to send its conversation there. The daemon saves the token separately and supplies it to the selected Claude process. Subscription usage collection and automatic failover exclude gateways.
+
+**Find local profiles** links an existing Claude login. **Prefer the most available subscription** balances new agents using fresh account-wide quota readings. **Move idle agents** moves eligible sessions between subscriptions and reports the result for each agent.
+
 ## How it works
 
 - Each account you add gets its own credential profile. Settings, skills, and session history stay shared with your existing CLI setup, so a profile is not a sandbox.
@@ -13,13 +19,13 @@ Limits cover every window the provider reports, such as 5-hour and weekly use, w
 - A line in the chat records applied switches, and why a new agent did not start on the default. These lines are best effort and do not survive a daemon restart.
 - Signed-in accounts also appear in Paseo's Usage view, and Paseo's usage popover for an agent on a managed account shows that account.
 - When a turn stops because its account's limit is used up, the chat shows a row with the time the limit lifts and a button such as **Switch to Second and continue** for the signed-in account with the most room. After the switch the agent is asked to continue. If no other account has room, the row says so. Codex reports such a turn as failed; Claude reports it as completed, so a completed Claude turn is checked when the last reading already shows its account used up, and not while the account's paid extra usage still has room. Each time an account runs out, the chat gets one row, not one per turn. **When a limit runs out during a chat** under a provider in Accounts can be set to **Switch automatically**, which switches without the click. The default is **Offer a switch**. After a completed Claude turn the automatic switch does not ask the agent to continue, since the turn may really have finished; the row says the next message runs on the new account. Automatic switching happens once per turn and at most three times an hour for a chat, and never back to an account the chat left within that hour.
-- The account chip in the composer opens the switcher for that chat. A chat changes account only through **Apply**, `/account name`, the switch button of the limit row, or automatic switching if you turn it on, and only while the agent is idle with no pending permission request; Paseo reloads the agent with its session intact. A switch refused before the reload changes nothing. If it fails once the reload has started, the plugin tries to restore the previous account.
+- The account chip in the composer opens the switcher for that chat. A chat changes account through **Move idle agents**, **Apply**, `/account name`, the switch button of the limit row, or automatic switching if you turn it on, and only while the agent is idle with no pending permission request; Paseo reloads the agent with its session intact. A switch refused before the reload changes nothing. If it fails once the reload has started, the plugin tries to restore the previous account.
 
 ## Setup
 
 - Paseo 0.11 or newer on a macOS or Linux daemon, with Node.js 22.12 or newer.
 - The official Paseo CLI and at least one of Claude Code or Codex on the daemon. A provider without its CLI shows as unavailable; after you install it, reload the plugin and select **Enable** in that provider's section.
-- A Claude or ChatGPT subscription for each account. API keys are not supported. Adding an account runs the official CLI sign-in from Paseo.
+- A Claude or ChatGPT login for subscription accounts, or a Messages-compatible endpoint and bearer token for an explicitly selected Claude gateway.
 
 ## What it reads and sends
 

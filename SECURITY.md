@@ -21,7 +21,9 @@ response time or long-term support commitment for older versions.
 
 ## Credential handling
 
-- The official provider CLI performs sign-in and token refresh.
+- The official provider CLI performs subscription sign-in and token refresh. A linked Claude profile uses its existing credential namespace. Removing a link deletes only the plugin-managed launch profile.
+- A gateway token submitted through Accounts is stored in a separate owner-readable and owner-writable file under the daemon’s account-switcher directory. It is passed to the bound Claude process as `ANTHROPIC_AUTH_TOKEN`. Listings, session hook responses, usage checks and launch arguments omit it. Protect the host, its backups, and the tools running as that user.
+- The selected gateway receives the agent’s prompts and conversation history. Select an endpoint you trust. Gateways use HTTPS, with HTTP also allowed for loopback services.
 - Managed profiles isolate authorization data; shared settings and conversation
   history are intentional. Profiles are not an operating-system security boundary.
 - Access and refresh tokens are not returned through plugin RPC. Temporary sign-in

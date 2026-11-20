@@ -32,16 +32,17 @@ export class SwitchService {
  private applying:Set<string>;
  private receiptTimeoutMs:number;
  constructor(private readonly deps:SwitchDependencies){this.applying=deps.applying??new Set();this.receiptTimeoutMs=deps.receiptTimeoutMs??15_000;}
- async prepare(agentId:string,accountId:string|null):Promise<Binding>{
+ async prepare(agentId:string,accountId:string|null,expectedFrom?:string):Promise<Binding>{
    if(this.applying.has(agentId))throw new SwitchRefusal("An account switch is already in progress.");
    const agent=await this.deps.inspect(agentId);
    if(agent.archived)throw new SwitchRefusal("The agent is archived.");
    if(agent.provider!=="claude"&&agent.provider!=="codex")throw new SwitchRefusal("Only Claude and Codex are supported.");
-   return BindingSchema.parse(await this.deps.store.prepare(agentId,agent.provider,accountId));
+   if(expectedFrom && agent.busy)throw new SwitchRefusal("The agent is busy or waiting for permission.");
+   return BindingSchema.parse(await this.deps.store.prepare(agentId,agent.provider,accountId,expectedFrom));
  }
  /** `expected` is the account the caller showed or named; another client's later selection must not be applied in its place.
   * `switching` is told once the binding has started switching; a failure from then on is rolled back here. */
- async apply(agentId:string,expected?:string,switching?:()=>void):Promise<Binding>{
+ async apply(agentId:string,expected?:string,switching?:()=>void,expectedFrom?:string):Promise<Binding>{
    if(this.applying.has(agentId))throw new SwitchRefusal("An account switch is already in progress.");
    this.applying.add(agentId);
    let previous:StoredBinding|undefined;
@@ -51,6 +52,7 @@ export class SwitchService {
      if(!state.integration.enabled)throw new SwitchRefusal("Enable account integration first.");
      const selected=state.bindings.find(b=>b.agentId===agentId);
      if(!selected?.pendingAccountId)throw new SwitchRefusal("Select an account first.");
+     if(expectedFrom && selected.currentAccountId!==expectedFrom)throw new SwitchRefusal("The agent changed accounts before the move.");
      if(expected&&selected.pendingAccountId!==expected)throw new SwitchRefusal("The account selection changed; try again.");
      const target=accountFrom(state,selected.pendingAccountId);
      // Without the launcher in its command, the provider would never confirm the new account.
@@ -61,7 +63,7 @@ export class SwitchService {
      const {authStatus}=await this.deps.checkAccount(target.id);
      if(authStatus!=="ready")throw new SwitchRefusal(authStatus==="needs_auth"?"Sign in to the selected account first.":"Cannot verify the selected account's sign-in. Check its credentials in Accounts, then try again.");
      await assertIdle();
-     previous=await store.change(r=>{const b=r.bindings.find(b=>b.agentId===agentId);if(!r.integration.enabled||!b||b.pendingAccountId!==target.id||b.status==="switching")throw new SwitchRefusal("The account selection changed; try again.");if(accountFrom(r,target.id).loginToken)throw new SwitchRefusal("Account sign-in is still in progress.");const old=structuredClone(b);b.status="switching";b.error=null;b.launchAccountId=target.id;b.launchToken=token;return old;});
+     previous=await store.change(r=>{const b=r.bindings.find(b=>b.agentId===agentId);if(!r.integration.enabled||!b||b.pendingAccountId!==target.id||expectedFrom&&b.currentAccountId!==expectedFrom||b.status==="switching")throw new SwitchRefusal("The account selection changed; try again.");if(accountFrom(r,target.id).loginToken)throw new SwitchRefusal("Account sign-in is still in progress.");const old=structuredClone(b);b.status="switching";b.error=null;b.launchAccountId=target.id;b.launchToken=token;return old;});
      switching?.();
      await this.deps.reload(agentId);
      if(!await confirmLaunch(store.root,agentId,target.id,token,this.receiptTimeoutMs))throw new SwitchRefusal("The new account did not confirm its launch.");
@@ -87,11 +89,11 @@ export class SwitchService {
  /** Selects `accountId` and applies it in one step, for a switch the user did not select in the switcher (the failover
   * row's button, the automatic switch). A refusal before the binding starts switching puts the agent's selection back
   * as it was and drops a binding this call created, so no selection the user never made is left pending. */
- async switchTo(agentId:string,accountId:string):Promise<Binding>{
+ async switchTo(agentId:string,accountId:string,expectedFrom?:string):Promise<Binding>{
    const {store}=this.deps,before=(await store.read()).bindings.find(b=>b.agentId===agentId);
-   const prepared=await this.prepare(agentId,accountId);
+   const prepared=await this.prepare(agentId,accountId,expectedFrom);
    let started=false;
-   try{return await this.apply(agentId,accountId,()=>{started=true;});}
+   try{return await this.apply(agentId,accountId,()=>{started=true;},expectedFrom);}
    catch(error){
      // Only a binding exactly as `prepare` left it is put back; anything else is a newer choice of another client.
      if(!started)await store.change(r=>{
@@ -104,16 +106,17 @@ export class SwitchService {
    }
  }
  /** Binds a new agent to the default account, or to the next usable one when provider data shows the default would fail. */
- async bindNewAgent(agentId:string,provider:Provider,model:string|null=null,requested:string|null=null):Promise<{accountId:string;defaultId:string|null;reason:Blocker|"sign-in"|"unverified"|"requested"|null}|undefined>{
+ async bindNewAgent(agentId:string,provider:Provider,model:string|null=null,requested:string|null=null):Promise<{accountId:string;defaultId:string|null;reason:Blocker|"sign-in"|"unverified"|"requested"|"headroom"|null}|undefined>{
    const state=await this.deps.store.read();
    if(requested!==null)return this.bindRequested(state,agentId,provider,requested);
    if(!state.integration.enabled||!state.integration.providers.includes(provider)||state.bindings.some(b=>b.agentId===agentId))return;
-   const selected=state.defaults[provider];if(!selected)return;
+   const balance=provider==="claude" && state.preferHeadroom && state.fallback.claude;
+   const selected=state.defaults[provider]??(balance?"system-claude":null);if(!selected)return;
    const account=accountFrom(state,selected);
    if(account.provider!==provider)throw new SwitchRefusal("The default account belongs to another provider.");
    if(account.loginToken)throw new SwitchRefusal("Default account sign-in is still in progress.");
    const usage=await this.deps.usage?.().catch(()=>[])??[];
-   const evidence={defaultId:selected,accounts:state.accounts.filter(a=>a.provider===provider),usage,model,now:Date.now()};
+   const evidence={defaultId:selected,accounts:state.accounts.filter(a=>a.provider===provider && a.source!=="gateway"),preferHeadroom:balance,usage,model,now:Date.now()};
    let chosen:string|undefined,defaultStatus:string|undefined;
    // With fallback off the default is binding, as before 0.7: the agent starts there or not at all.
    for(const id of state.fallback[provider]?launchOrder(evidence):[selected]){
@@ -123,11 +126,11 @@ export class SwitchService {
    }
    if(!chosen)throw new SwitchRefusal("The default account requires authentication. Sign in or select another default account.");
    // Only the official probe's `needs_auth` means sign-in; a timeout or an unknown answer is reported as unverified.
-   const reason=chosen===selected?null:defaultBlocker(evidence)??(defaultStatus==="needs_auth"?"sign-in":"unverified");
-   if(reason)console.log(`New agent ${agentId}: the default ${provider} account would fail (${reason}); starting on account ${chosen}.`);
+   const reason=chosen===selected?null:defaultBlocker(evidence)??(balance && defaultStatus===undefined?"headroom":defaultStatus==="needs_auth"?"sign-in":"unverified");
+   if(reason)console.log(`New agent ${agentId}: ${provider} selection (${reason}); starting on account ${chosen}.`);
    const bound=await this.deps.store.change(r=>{
      if(!r.integration.enabled||!r.integration.providers.includes(provider)||r.bindings.some(b=>b.agentId===agentId))return;
-     if(r.defaults[provider]!==selected)throw new SwitchRefusal("The default account changed; create the agent again.");
+     if(r.defaults[provider]!==state.defaults[provider]||r.preferHeadroom!==state.preferHeadroom||r.fallback[provider]!==state.fallback[provider])throw new SwitchRefusal("The default account changed; create the agent again.");
      if(accountFrom(r,chosen).loginToken)throw new SwitchRefusal("Account sign-in is still in progress.");
      r.bindings.push({agentId,provider,currentAccountId:null,pendingAccountId:null,launchAccountId:chosen,launchToken:randomUUID(),status:"ready",error:null,registrationObserved:false,boundAt:new Date().toISOString()});
      return true;

@@ -15,7 +15,7 @@ export const LoginSessionSchema = z.object({
 export type LoginSession = z.infer<typeof LoginSessionSchema>;
 export const AccountSchema = z.object({
   id: z.string(), provider: ProviderSchema, label: z.string(),
-  source: z.enum(["managed", "system"]), email: z.string().nullable(),
+  source: z.enum(["managed", "system", "linked", "gateway"]), baseUrl: z.string().optional(), email: z.string().nullable(),
   plan: z.string().nullable(), authStatus: z.enum(["ready", "needs_auth", "unknown", "error"]),
   createdAt: z.string(),
   login: z.union([z.object({sessionId:z.string(),mode:LoginModeSchema}),z.object({workspaceId:z.string(),terminalId:z.string()})]).nullable().optional(),
@@ -33,6 +33,7 @@ export type ProviderStatus = z.infer<typeof ProviderStatusSchema>;
 export const StateSchema = z.object({
   accounts: z.array(AccountSchema), bindings: z.array(BindingSchema),
   defaults: z.object({ claude: z.string().nullable(), codex: z.string().nullable() }),
+  preferHeadroom: z.boolean().optional(),
   fallback: z.object({ claude: z.boolean(), codex: z.boolean() }).default({ claude: true, codex: true }),
   autoFailover: z.object({ claude: z.boolean(), codex: z.boolean() }).default({ claude: false, codex: false }),
   integration: z.object({ enabled: z.boolean(), error: z.string().nullable() }),
@@ -64,6 +65,24 @@ const Empty = z.object({});
 const AccountId = z.object({ accountId: z.string().min(1) });
 export const listAccounts = defineRpc({ name: "accounts.list", input: Empty, output: StateSchema });
 export const addAccount = defineRpc({ name: "accounts.add", input: z.object({ provider: ProviderSchema, label: z.string().trim().min(1).max(80) }), output: AccountSchema });
+export const GatewayInput = z.object({
+  label: z.string().trim().min(1).max(80),
+  base_url: z.string().trim().max(2048).refine(value => {
+    try {
+      const url = new URL(value);
+      return !url.username && !url.password && !/[?#\\\s]/.test(value) &&
+        (url.protocol === "https:" || url.protocol === "http:" && ["localhost","127.0.0.1","[::1]"].includes(url.hostname));
+    } catch { return false; }
+  }, "Use HTTPS or a loopback HTTP address without credentials, query or fragment."),
+  api_token: z.string().min(1).max(8192).regex(/^[!-~]+$/, "Enter a bearer token without whitespace."),
+});
+export const addGateway = defineRpc({ name: "claude.gateway-add", input: GatewayInput, output: AccountSchema });
+export const rotateGateway = defineRpc({ name: "claude.gateway-rotate", input: AccountId.extend({ api_token: GatewayInput.shape.api_token }), output: Empty });
+export const listProfiles = defineRpc({ name: "claude.profiles", input: Empty, output: z.array(z.string()) });
+export const linkProfile = defineRpc({ name: "claude.link", input: z.object({ name: z.string().max(255) }), output: AccountSchema });
+export const setHeadroom = defineRpc({ name: "claude.headroom", input: z.object({ enabled: z.boolean() }), output: Empty });
+export const moveCandidates = defineRpc({ name: "claude.move-candidates", input: AccountId, output: z.array(z.string()) });
+export const moveIdleAgent = defineRpc({ name: "claude.move-idle", input: z.object({ agentId: z.string().min(1), from: z.string(), to: z.string() }), output: z.object({ moved: z.boolean(), detail: z.string() }) });
 export const renameAccount = defineRpc({ name: "accounts.rename", input: AccountId.extend({ label: z.string().trim().min(1).max(80) }), output: AccountSchema });
 export const removeAccount = defineRpc({ name: "accounts.remove", input: AccountId, output: Empty });
 export const setDefaultAccount = defineRpc({ name: "accounts.default", input: z.object({ provider: ProviderSchema, accountId: z.string().nullable() }), output: Empty });

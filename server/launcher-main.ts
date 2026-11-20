@@ -1,11 +1,13 @@
 import { spawn } from "node:child_process";
-import { lstat, realpath } from "node:fs/promises";
+import { lstat, realpath, rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { readRegistry } from "./store";
 import { assertManagedCommand, buildAccountEnv, prepareProfile } from "./profiles";
+import { gatewayEnvironment, gatewayArguments, linkedCredentialHome, validateLinkedProfile } from "./claude-profiles";
 import { atomicWrite } from "./files";
 
 class LauncherError extends Error {}
+let gatewaySettingsFile: string | undefined;
 let loginCompletion: { path: string; loginToken: string } | undefined;
 async function finishLogin(exitCode: number): Promise<void> {
   if (loginCompletion) await atomicWrite(loginCompletion.path, JSON.stringify({ loginToken: loginCompletion.loginToken, exitCode, finishedAt: new Date().toISOString() }));
@@ -32,7 +34,8 @@ async function main(): Promise<void> {
   if (accountId && !account) throw new LauncherError("Assigned account profile is unavailable; launch refused.");
   if (login && account?.source !== "managed") throw new LauncherError("Only managed account profiles support this login command.");
   if (!login && account?.loginToken) throw new LauncherError("Account login is still in progress; launch refused.");
-  if (account?.source === "managed") {
+  let commandArgs = command.slice(1);
+  if (account && account.source !== "system") {
     if (!/^[a-zA-Z0-9_-]+$/.test(account.id) || resolve(account.home) !== join(root, "accounts", account.id, provider)) throw new LauncherError("Assigned account profile path is invalid; launch refused.");
     if (login) {
       if (!account.loginToken) throw new LauncherError("Start this account login from Paseo before running the login launcher.");
@@ -48,12 +51,28 @@ async function main(): Promise<void> {
     if (!login) {
       let current;
       try { current = await readRegistry(root); } catch { throw new LauncherError("Account registry is missing or corrupt; launch refused."); }
+      if (account.source === "gateway" && (!current.integration.enabled || !current.integration.providers.includes(provider) ||
+          !current.bindings.some(b => b.agentId === agentId && b.provider === provider && (b.launchAccountId ?? b.currentAccountId) === account.id))) {
+        throw new LauncherError("The gateway selection changed; launch refused.");
+      }
       if (!current.bindings.some(candidate => candidate.agentId === agentId)) throw new LauncherError("The account reservation was released while this agent started; launch refused.");
     }
     env = buildAccountEnv(provider, account.home, env);
+    if (account.source === "linked") {
+      const credentials = linkedCredentialHome(account);
+      try { await validateLinkedProfile(credentials); } catch { throw new LauncherError("The linked subscription profile is unavailable."); }
+      env.CLAUDE_SECURESTORAGE_CONFIG_DIR = credentials;
+    }
+    if (account.source === "gateway") {
+      Object.assign(env, await gatewayEnvironment(root, account));
+      const pinned = await gatewayArguments(root, [...commandArgs, ...args], env.ANTHROPIC_BASE_URL!);
+      gatewaySettingsFile = pinned.file;
+      commandArgs = [];
+      args = pinned.args;
+    }
   }
   if (login) args = provider === "claude" ? ["auth", "login", "--claudeai"] : args[2] === "--browser" ? ["login"] : ["login", "--device-auth"];
-  const child = spawn(command[0], [...command.slice(1), ...args], { env, stdio: "inherit" });
+  const child = spawn(command[0], [...commandArgs, ...args], { env, stdio: "inherit" });
   const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
   const forward = new Map<NodeJS.Signals, () => void>();
   for (const signal of signals) { const handler = () => { child.kill(signal); }; forward.set(signal, handler); process.on(signal, handler); }
@@ -70,6 +89,7 @@ async function main(): Promise<void> {
     child.once("close", (code, signal) => resolveExit({ code, signal }));
   });
   const result = await exited;
+  if (gatewaySettingsFile) await rm(gatewaySettingsFile, { force: true });
   await receipt;
   await finishLogin(result.code ?? 1);
   for (const [signal, handler] of forward) process.removeListener(signal, handler);
@@ -82,6 +102,7 @@ async function main(): Promise<void> {
 }
 
 main().catch(async error => {
+  if (gatewaySettingsFile) await rm(gatewaySettingsFile, { force: true }).catch(() => {});
   await finishLogin(1).catch(() => {});
   const safe = error instanceof LauncherError ? error.message : "Account launcher failed.";
   // Only errors constructed above leave this process. Filesystem/parse failures remain private.

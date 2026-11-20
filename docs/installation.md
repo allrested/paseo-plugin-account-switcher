@@ -10,7 +10,7 @@ Use a macOS or Linux daemon, Paseo **0.11.0 or newer** on both daemon and client
 
 Install the official `paseo` CLI and at least one of `claude` or `codex` for the daemon's operating-system user. Applying an account reloads the agent with the CLI Paseo names in `PASEO_CLI`, which the desktop app sets to its bundled CLI, or, when that is unset or cannot start, with `paseo` from the daemon's PATH. Each provider CLI you want to use must be discoverable through the daemon's PATH or its configured Paseo provider command. A provider whose CLI is missing gets no launcher: Accounts says so and hides its **Current CLI** account. After installing it, reload the plugin, then select **Enable** in that provider's section if switching is already on for the other.
 
-Existing CLI subscription sign-ins appear as **Current CLI** accounts. You can add isolated accounts through Paseo after installation. API keys, alternate API providers, and conflicting authentication or endpoint overrides are unsupported; the plugin reports them instead of assuming which account they represent.
+Existing CLI subscription sign-ins appear as **Current CLI** accounts. You can add isolated accounts through Paseo after installation. Use **Add gateway** in this fork for a custom Claude endpoint and bearer token. Keep the provider and daemon environment free of global authentication overrides so subscription launches remain isolated.
 
 Enable **Settings → Plugins → Enable plugins** on the target host. Paseo plugins are trusted, unsandboxed code. Installing this plugin and its dependencies grants them the daemon user's access, including files, processes, credentials, and network services.
 
@@ -134,7 +134,7 @@ paseo plugin enable account-switcher --host 127.0.0.1:6767
 | Accounts is missing | Confirm the selected host, Paseo 0.11.0 or newer (including beta releases after 0.11.0) on the app and daemon, the global plugin switch, and `running` status. |
 | Provider CLI not found | Neither CLI was found. Check the installations and the daemon user's PATH or configured provider commands. A terminal shell's PATH can differ from a background daemon's. |
 | A provider says its CLI was not found | That provider is skipped; the other keeps working. Install its CLI or configure its command, reload the plugin, then select **Enable** in its section. |
-| Authentication override error | Check provider settings, CLI arguments, and the daemon environment for API keys, custom endpoints, or alternate providers. Use subscription authentication for this plugin. Do not paste secret values into a report. |
+| Authentication override error | Check provider settings, CLI arguments, and the daemon environment for API keys, custom endpoints, or alternate providers. Configure gateway credentials under **Accounts → Claude → Add gateway**. Do not paste secret values into a report. |
 | Provider commands changed | Something else replaced a launcher. Review that configuration change, then explicitly select **Enable** again if you want Account Switcher to own provider launches. |
 | Sign-in link does not open | In the desktop app, use **Copy link** and your usual browser. Elsewhere, use **Open browser** or **Copy link**. **Show sign-in link** provides selectable text when clipboard access fails. |
 | Codex browser sign-in stalls remotely | Cancel and choose **Device code**, or finish **In browser** sign-in on the daemon computer. |

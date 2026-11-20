@@ -443,3 +443,15 @@ describe("an account named when the agent is created",()=>{
   expect((await launched(store,"bound"))?.launchAccountId).toBe(target.id);
  });
 });
+
+it("bulk switching preserves busy agents, changed sources, and pending selections",async()=>{
+ const f=await fixture();
+ await expect(f.service.switchTo("busy",f.target.id,"system-codex")).rejects.toThrow(/busy/);
+ expect((await f.store.read()).bindings).toHaveLength(0);
+ f.setBusy(false);
+ await f.service.prepare("pending",f.target.id);
+ await expect(f.service.switchTo("pending",f.target.id,"system-codex")).rejects.toThrow(/selection changed/);
+ await expect(f.service.switchTo("changed",f.target.id,"other")).rejects.toThrow(/selection changed/);
+ expect(f.reloads()).toBe(0);
+ await expect(f.service.switchTo("idle",f.target.id,"system-codex")).resolves.toMatchObject({currentAccountId:f.target.id});
+});

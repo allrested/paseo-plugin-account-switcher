@@ -5,7 +5,7 @@ import { z } from "zod";
 import { AccountSchema, BindingSchema, ProviderSchema, type Provider, type AccountState } from "../shared/contracts";
 import { atomicWrite, isMissing } from "./files";
 
-export const StoredAccountSchema = AccountSchema.extend({ home: z.string(), identityKey: z.string().nullable(), generation: z.number().int(), loginToken:z.string().nullable().default(null) });
+export const StoredAccountSchema = AccountSchema.extend({ home: z.string(), credentialHome: z.string().optional(), identityKey: z.string().nullable(), generation: z.number().int(), loginToken:z.string().nullable().default(null) });
 export type StoredAccount = z.infer<typeof StoredAccountSchema>;
 const StoredBindingSchema = BindingSchema.extend({ launchAccountId: z.string().nullable(), launchToken: z.string().nullable(), registrationObserved:z.boolean().default(false), boundAt:z.string().optional() });
 export type StoredBinding = z.infer<typeof StoredBindingSchema>;
@@ -14,6 +14,7 @@ export const RegistrySchema = z.object({
  version: z.literal(1), accounts: z.array(StoredAccountSchema), bindings: z.array(StoredBindingSchema),
  defaults: z.object({claude:z.string().nullable(),codex:z.string().nullable()}),
  // Whether a new agent may start on another account when the default would fail; registries before 0.7 had no choice and default to on.
+ preferHeadroom: z.boolean().default(false),
  fallback: z.object({claude:z.boolean(),codex:z.boolean()}).default({claude:true,codex:true}),
  // Whether a chat whose turn ran out of its account's limit switches by itself instead of offering a switch; off unless chosen.
  autoFailover: z.object({claude:z.boolean(),codex:z.boolean()}).default({claude:false,codex:false}),
@@ -71,7 +72,7 @@ export class AccountStore {
  async snapshot():Promise<AccountState> {
    const state=await this.read();
    const status=(provider:Provider)=>({available:state.available[provider],integrated:state.integration.enabled&&state.integration.providers.includes(provider)});
-   return { accounts:state.accounts.map(a=>AccountSchema.parse(a)),bindings:state.bindings.map(b=>BindingSchema.parse(b)),defaults:state.defaults,fallback:state.fallback,autoFailover:state.autoFailover,integration:{enabled:state.integration.enabled,error:state.integration.error},providers:{claude:status("claude"),codex:status("codex")} };
+   return { accounts:state.accounts.map(a=>AccountSchema.parse(a)),bindings:state.bindings.map(b=>BindingSchema.parse(b)),defaults:state.defaults,preferHeadroom:state.preferHeadroom,fallback:state.fallback,autoFailover:state.autoFailover,integration:{enabled:state.integration.enabled,error:state.integration.error},providers:{claude:status("claude"),codex:status("codex")} };
  }
  async add(provider:Provider,label:string):Promise<StoredAccount> {
    return this.change(state=>{const account:StoredAccount={id:randomUUID(),provider,label:label.trim(),source:"managed",home:"",email:null,plan:null,authStatus:"needs_auth",createdAt:new Date().toISOString(),identityKey:null,generation:0,loginToken:null};account.home=join(this.root,"accounts",account.id,provider);state.accounts.push(account);return account;});
@@ -79,10 +80,14 @@ export class AccountStore {
  async remove(id:string,beforeRemove?:(account:StoredAccount,registry:Registry)=>Promise<void>):Promise<void> {
    await this.change(async state=>{const account=accountFrom(state,id);if(account.source==="system")throw new Error("The current CLI account cannot be removed.");if(state.bindings.some(b=>[b.currentAccountId,b.pendingAccountId,b.launchAccountId].includes(id))||Object.values(state.defaults).includes(id))throw new Error("The account is used by an agent or selected as the default.");await beforeRemove?.(account,state);state.accounts=state.accounts.filter(a=>a.id!==id);});
  }
- async prepare(agentId:string,provider:Provider,accountId:string|null):Promise<StoredBinding> {
+ async prepare(agentId:string,provider:Provider,accountId:string|null,expectedFrom?:string):Promise<StoredBinding> {
    return this.change(state=>{
      if(accountId&&accountFrom(state,accountId).provider!==provider)throw new Error("The account belongs to another provider.");
      let binding=state.bindings.find(b=>b.agentId===agentId);
+     if (expectedFrom !== undefined && (boundAccount(state,agentId,provider) !== expectedFrom ||
+         binding && (binding.status !== "ready" || binding.pendingAccountId || binding.launchToken))) {
+       throw new Error("The agent's account or selection changed.");
+     }
      if(!binding){binding={agentId,provider,currentAccountId:`system-${provider}`,pendingAccountId:null,status:"ready",error:null,launchAccountId:`system-${provider}`,launchToken:null,registrationObserved:true};state.bindings.push(binding);}
      if(binding.status==="switching")throw new Error("An account switch is already in progress.");
      binding.pendingAccountId=accountId===binding.currentAccountId?null:accountId;binding.error=null;binding.status="ready";binding.launchToken=null;binding.registrationObserved=true;return binding;

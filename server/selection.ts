@@ -30,7 +30,7 @@ export function room(snapshot: UsageSnapshot | undefined, now: number): number |
 
 /** Accounts a new agent tries, in order. The default leads unless provider data shows it would fail;
  * then signed-in accounts follow by room, unknown room last, and the default stays as the last resort. */
-export function launchOrder(input: { defaultId: string; accounts: readonly SelectionAccount[]; usage: readonly UsageSnapshot[]; model: string | null; now: number }): string[] {
+export function launchOrder(input: { defaultId: string; preferHeadroom?: boolean; accounts: readonly SelectionAccount[]; usage: readonly UsageSnapshot[]; model: string | null; now: number }): string[] {
   const { defaultId, accounts, usage, now } = input;
   const snapshotOf = (id: string) => usage.find(item => item.accountId === id);
   // The hint is the requested model, before Paseo resolves aliases; one no account lists proves nothing.
@@ -41,7 +41,14 @@ export function launchOrder(input: { defaultId: string; accounts: readonly Selec
     .map((account, index) => ({ id: account.id, index, room: room(snapshotOf(account.id), now) }))
     .sort((a, b) => (b.room ?? -1) - (a.room ?? -1) || a.index - b.index)
     .map(account => account.id);
-  return blocker(snapshotOf(defaultId), model, now) ? [...spares, defaultId] : [defaultId, ...spares];
+  const blocked = blocker(snapshotOf(defaultId), model, now);
+  if (input.preferHeadroom) {
+    const freshRoom = (id: string) => snapshotOf(id)?.status === "ok" ? room(snapshotOf(id), now) ?? -1 : -1;
+    const eligible = blocked ? spares : [defaultId, ...spares];
+    eligible.sort((a,b) => freshRoom(b) - freshRoom(a));
+    return blocked ? [...eligible, defaultId] : eligible;
+  }
+  return blocked ? [...spares, defaultId] : [defaultId, ...spares];
 }
 
 /** Why the default was passed over, with the same evidence `launchOrder` used. */
