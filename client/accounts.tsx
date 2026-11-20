@@ -2,6 +2,7 @@ import { useRpc, type PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { useState } from "react";
 import { SettingsCard, SettingsSection, SettingsSelect, SettingsSwitch } from "@getpaseo/plugin/client/ui";
 import { AccountCard, type SignInActions } from "./account-card";
+import { ClaudeTools } from "./claude-tools";
 import { ScrollView, Text, View } from "react-native";
 import { addAccount, cliName, missingCli, refreshUsage, setAutoFailover, setFallback, setIntegration, startLogin,
   type Account, type AccountState, type LoginSession, type Provider } from "../shared/contracts";
@@ -20,7 +21,7 @@ type ProviderOption = (typeof providers)[number];
 
 // A system account stands for a CLI the daemon does not have. Managed sign-ins stay listed so they can be removed.
 function listed(account: Account, state: AccountState): boolean {
-  return state.providers[account.provider].available || account.source === "managed";
+  return state.providers[account.provider].available || account.source !== "system";
 }
 
 function AddAccountForm({ theme, host, onChanged, initialProvider, options, onClose, onStarted }: AccountsProps & Pick<SignInActions, "onStarted"> & { initialProvider: Provider; options: readonly ProviderOption[]; onClose(): void }) {
@@ -113,6 +114,7 @@ export function AccountsSurface(props: AccountsProps) {
             <View style={{ flex: 1, minWidth: 200 }}><Notice theme={theme} tone="warning">Account switching is off for {cliName[provider]}: its agents use the system CLI.</Notice></View>
             <Button theme={theme} disabled={action.isPending} onPress={enableIntegration}>Enable</Button>
           </View> : null}
+        {provider === "claude" && status.available ? <ClaudeTools key={host.id} {...props} state={state} /> : null}
         {group.map((account) => <AccountCard key={account.id} {...props} account={account} state={state} snapshot={usage.data?.accounts.find((item) => item.accountId === account.id)} checksOff={checksOff} now={now} onStarted={onStarted} onResume={onResume} />)}
         {group.length > 1 ? <SettingsCard>
           {state.defaults[provider] ? <SettingsSelect label="When the default is unavailable" value={state.fallback[provider] ? "fallback" : "default"}

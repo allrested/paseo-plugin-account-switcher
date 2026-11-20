@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import type { PaseoApi } from "./paseo-api";
+import { linkedCredentialHome, validateLinkedProfile } from "./claude-profiles";
 import { missingCli, type Provider } from "../shared/contracts";
 import { accountFrom, type AccountStore, type Registry, type StoredAccount } from "./store";
 import { assertManagedCommand, buildAccountEnv, prepareProfile } from "./profiles";
@@ -19,7 +20,8 @@ export function accountCommand(registry: Registry, provider: Provider): string[]
 }
 
 export function accountEnvironment(account: StoredAccount, registry: Registry, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  if (account.source === "managed") return buildAccountEnv(account.provider, account.home, base);
+  if (account.source === "linked") return { ...buildAccountEnv(account.provider, account.home, base), CLAUDE_SECURESTORAGE_CONFIG_DIR: linkedCredentialHome(account) };
+  if (account.source !== "system") return buildAccountEnv(account.provider, account.home, base);
   const env = { ...base };
   if (account.provider === "codex") env.CODEX_HOME = account.home;
   else {
@@ -82,7 +84,9 @@ function decodeClaims(token: unknown): Record<string, unknown> {
 
 export async function probeAccount(account: StoredAccount, registry: Registry): Promise<Identity> {
   try {
-    if (account.source === "managed") {
+    if (account.source === "gateway") return empty("unknown");
+    if (account.source === "linked") await validateLinkedProfile(linkedCredentialHome(account));
+    if (account.source === "managed" || account.source === "linked") {
       if (!(await lstat(account.home)).isDirectory()) return empty("error");
       const root = dirname(dirname(dirname(account.home)));
       if (await realpath(account.home) !== join(await realpath(root), "accounts", account.id, account.provider)) return empty("error");

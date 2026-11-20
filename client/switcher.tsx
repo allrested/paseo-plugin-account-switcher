@@ -70,7 +70,7 @@ export function AgentSwitcher({ theme, host, agentId, onChanged, openAccounts, c
     </View> : null}
     {unconfirmed
       ? <Notice theme={theme} tone="warning">Account not confirmed. Choose an account below and apply it when the agent is idle.</Notice>
-      : provider ? <QuotaSummary theme={theme} snapshot={snapshot} now={now} compact
+      : provider && current?.source !== "gateway" ? <QuotaSummary theme={theme} snapshot={snapshot} now={now} compact
         onRefresh={current ? () => action.run(() => refresh({ accountId: current.id })) : undefined} refreshing={action.isPending} /> : null}
     {candidates.length ? <View style={{ gap: 6 }}>
       <Text style={{ ...muted(theme), fontWeight: "600" }}>Switch to</Text>
@@ -79,7 +79,7 @@ export function AgentSwitcher({ theme, host, agentId, onChanged, openAccounts, c
         const prepared = pending?.id === account.id;
         const available = accountAvailable(account);
         const blocked = disabled || actual || !available;
-        const detail = account.login ? "sign-in in progress · finish in Accounts"
+        const detail = account.source === "gateway" ? `Gateway · ${account.baseUrl}` : account.login ? "sign-in in progress · finish in Accounts"
           : account.authStatus === "error" ? "cannot access sign-in · check credentials in Accounts"
           : account.authStatus === "unknown" ? "sign-in not confirmed · check in Accounts"
           : !available ? "sign-in required · check in Accounts"
@@ -103,6 +103,7 @@ export function AgentSwitcher({ theme, host, agentId, onChanged, openAccounts, c
       })}
     </View> : null}
     {pending ? <View style={{ gap: 8 }}>
+      {pending.source === "gateway" ? <Notice theme={theme}>Applying sends this conversation to {pending.baseUrl} on the next turn.</Notice> : null}
       {risk ? <Notice theme={theme} tone="warning">{risk}</Notice> : null}
       <View style={row}>
         <Button theme={theme} variant="primary" disabled={disabled || !idle || !accountAvailable(pending)} onPress={() => action.run(async () => {

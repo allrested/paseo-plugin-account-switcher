@@ -1,0 +1,124 @@
+import { randomUUID } from "node:crypto";
+import { lstat, mkdir, readFile, readdir, realpath, rm } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
+import { homedir } from "node:os";
+import { AccountSchema, GatewayInput } from "../shared/contracts";
+import { atomicWrite, isMissing } from "./files";
+import { assertClaudeSettings, prepareProfile } from "./profiles";
+import { accountFrom, type AccountStore, type Registry, type StoredAccount } from "./store";
+
+const profileName = /^\.claude-[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+export async function validateLinkedProfile(path: string, userHome = homedir()): Promise<void> {
+  if (dirname(path) !== userHome || !profileName.test(basename(path)) ||
+      !(await lstat(path)).isDirectory() || await realpath(path) !== join(await realpath(userHome), basename(path))) {
+    throw new Error("The linked Claude profile is unavailable.");
+  }
+  for (const file of ["settings.json", "settings.local.json"]) {
+    try { assertClaudeSettings(JSON.parse(await readFile(join(path, file), "utf8"))); }
+    catch (error) { if (!isMissing(error)) throw new Error("This profile has incompatible Claude settings."); }
+  }
+}
+
+export function linkedCredentialHome(account: StoredAccount): string {
+  if (account.source !== "linked" || account.provider !== "claude" || !account.credentialHome) throw new Error("Missing linked Claude credential directory.");
+  return account.credentialHome;
+}
+
+function systemProfileHomes(state: Registry) {
+  return [state.sourceHomes.claude, state.sourceEnvironment.claude.CLAUDE_SECURESTORAGE_CONFIG_DIR].filter((path): path is string => Boolean(path));
+}
+
+async function canonical(path: string) { return realpath(path).catch(() => path); }
+
+export async function discoverProfiles(store: AccountStore, userHome = homedir()) {
+  const state = await store.read();
+  const known = new Set(await Promise.all([...systemProfileHomes(state), ...state.accounts.map(a => a.credentialHome ?? a.home)].map(canonical)));
+  const found: string[] = [];
+  for (const entry of await readdir(userHome, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !profileName.test(entry.name)) continue;
+    const path = join(userHome, entry.name);
+    if (known.has(await canonical(path))) continue;
+    try { await validateLinkedProfile(path, userHome); found.push(entry.name); }
+    catch { /* Only offer subscription-compatible profiles. */ }
+  }
+  return found.sort();
+}
+
+export async function linkProfile(store: AccountStore, name: string, userHome = homedir()) {
+  if (!profileName.test(name)) throw new Error("Invalid Claude profile name.");
+  const home = join(userHome, name);
+  await validateLinkedProfile(home, userHome);
+  return store.change(async state => {
+    if (!state.available.claude) throw new Error("Claude Code is unavailable.");
+    if ((await Promise.all(systemProfileHomes(state).map(canonical))).includes(await realpath(home))) throw new Error("The current CLI already uses this profile.");
+    const existing = state.accounts.find(a => (a.credentialHome ?? a.home) === home);
+    if (existing) return AccountSchema.parse(existing);
+    const id = randomUUID(), launchHome = join(store.root, "accounts", id, "claude");
+    try { await prepareProfile({ provider: "claude", home: launchHome, sourceHome: state.sourceHomes.claude, sourceEnvironment: state.sourceEnvironment.claude }); }
+    catch (error) { await rm(dirname(launchHome), { recursive: true, force: true }); throw error; }
+    const account: StoredAccount = { id, label: name.slice(8), provider: "claude", source: "linked", home: launchHome, credentialHome: home,
+      authStatus: "unknown", createdAt: new Date().toISOString(), email: null, plan: null, loginToken: null, identityKey: null, generation: 0 };
+    state.accounts.push(account);
+    return AccountSchema.parse(account);
+  });
+}
+
+export async function addGateway(store: AccountStore, input: { label: string; base_url: string; api_token: string }) {
+  const { label, base_url, api_token } = GatewayInput.parse(input);
+  const id = randomUUID();
+  const dir = join(store.root, "accounts", id), home = join(dir, "claude");
+  try {
+    return await store.change(async state => {
+      if (!state.available.claude) throw new Error("Claude Code is unavailable.");
+      await mkdir(home, { recursive: true, mode: 0o700 });
+      await prepareProfile({ provider: "claude", home, sourceHome: state.sourceHomes.claude, sourceEnvironment: state.sourceEnvironment.claude });
+      await atomicWrite(join(dir, "gateway.json"), JSON.stringify({ base_url, api_token }));
+      const account: StoredAccount = { id, provider: "claude", label, source: "gateway", home, baseUrl: base_url,
+        authStatus: "ready", createdAt: new Date().toISOString(), email: null, plan: null, loginToken: null, identityKey: null, generation: 0 };
+      state.accounts.push(account);
+      return AccountSchema.parse(account);
+    });
+  } catch (error) { await rm(dir, { recursive: true, force: true }); throw error; }
+}
+
+export async function gatewayEnvironment(root: string, account: StoredAccount) {
+  try {
+    if (account.source !== "gateway" || account.provider !== "claude" || !/^[a-zA-Z0-9_-]+$/.test(account.id)) throw new Error();
+    const path = join(root, "accounts", account.id, "gateway.json");
+    const stat = await lstat(path);
+    if (!stat.isFile() || (stat.mode & 0o077) !== 0 || await realpath(path) !== join(await realpath(root), "accounts", account.id, "gateway.json")) throw new Error();
+    const saved = GatewayInput.parse({ ...JSON.parse(await readFile(path, "utf8")), label: account.label });
+    if (saved.base_url !== account.baseUrl) throw new Error();
+    return { ANTHROPIC_BASE_URL: saved.base_url, ANTHROPIC_AUTH_TOKEN: saved.api_token };
+  } catch { throw new Error("The saved gateway credentials are unavailable."); }
+}
+
+export async function rotateGateway(store: AccountStore, accountId: string, token: string) {
+  await store.change(async state => {
+    const account = accountFrom(state, accountId);
+    const { ANTHROPIC_BASE_URL: base_url } = await gatewayEnvironment(store.root, account);
+    const api_token = GatewayInput.shape.api_token.parse(token);
+    await atomicWrite(join(store.root, "accounts", account.id, "gateway.json"), JSON.stringify({ base_url, api_token }));
+  });
+}
+
+// Pin the endpoint at CLI settings precedence. Preserve the SDK's settings and project
+// permission rules. Only the endpoint is public; the bearer token stays out of argv.
+export async function gatewayArguments(root: string, original: string[], endpoint: string) {
+  const args = [...original];
+  let last = -1, inline = false;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--settings") { last = ++i; inline = false; }
+    else if (args[i].startsWith("--settings=")) { last = i; inline = true; }
+  }
+  const env = { ANTHROPIC_BASE_URL: endpoint };
+  if (last < 0) return { args: [...args, "--settings", JSON.stringify({ env })], file: undefined };
+  const input = inline ? args[last].slice("--settings=".length) : args[last];
+  const settings = JSON.parse(input.trimStart().startsWith("{") ? input : await readFile(input, "utf8"));
+  assertClaudeSettings(settings);
+  const file = join(root, "launch-settings", randomUUID() + ".json");
+  await atomicWrite(file, JSON.stringify({ ...settings, env: { ...settings.env, ...env } }));
+  args[last] = inline ? "--settings=" + file : file;
+  return { args, file };
+}

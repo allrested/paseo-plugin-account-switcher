@@ -4,6 +4,12 @@ Account Switcher 让你在 Paseo 中使用多个 Claude 和 ChatGPT/Codex 订阅
 
 插件界面为英文，下文中的按钮名称保留英文原文。
 
+## 此分支的 Claude 账号管理
+
+在 **Accounts → Claude** 中选择 **Add gateway**，填写网关名称、兼容 Anthropic Messages 的地址和 API 令牌。在智能体的账号选择器中选择网关并按 **Apply**，该智能体就会把对话发送到该地址。令牌单独保存在守护进程所在主机。自动切换和订阅用量查询仅适用于订阅账号。
+
+使用 **Find local profiles** 可关联已有的 Claude 登录。**Prefer the most available subscription** 根据近期的剩余额度为新智能体选择订阅账号。**Move idle agents** 可在订阅账号之间转移空闲智能体，并逐个显示结果。
+
 ## 工作原理
 
 - 你添加的每个账号都有独立的凭据配置文件。设置、技能和会话历史仍与现有 CLI 配置共享，因此配置文件并不是沙箱。
@@ -21,7 +27,7 @@ Account Switcher 让你在 Paseo 中使用多个 Claude 和 ChatGPT/Codex 订阅
 
 - macOS 或 Linux 守护进程上的 Paseo 0.11 或更高版本，以及 Node.js 22.12 或更高版本。
 - 守护进程上需要官方 Paseo CLI，以及 Claude Code 或 Codex 至少其一。缺少 CLI 的提供商会显示为不可用；安装后重新加载插件，并在该提供商的分区中选择 **Enable**。
-- 每个账号都需要 Claude 或 ChatGPT 订阅。不支持 API 密钥。添加账号时，会在 Paseo 中运行官方 CLI 登录流程。
+- 订阅账号需要 Claude 或 ChatGPT 登录。Claude 网关另行使用自定义地址和 API 令牌。添加账号时，会在 Paseo 中运行官方 CLI 登录流程。
 
 ## 读取和发送的内容
 

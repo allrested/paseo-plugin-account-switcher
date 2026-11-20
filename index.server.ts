@@ -1,5 +1,6 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import * as rpc from "./shared/contracts";
+import { addGateway, discoverProfiles, linkProfile, rotateGateway } from "./server/claude-profiles";
 import { AccountController } from "./server/controller";
 import { AutoFailoverGuard, extraUsageLeft, failoverDecision, mayBeUsedUp } from "./server/failover";
 import type { PaseoApi } from "./server/paseo-api";
@@ -33,6 +34,41 @@ export default function contribute(server:PluginServerContext){
  const NOTE_TTL=600_000;
  server.handle(rpc.listAccounts,async(_,{paseo})=>controller.snapshot(paseo));
  server.handle(rpc.addAccount,async({provider,label},{paseo})=>{await controller.ensureRuntime(paseo);return controller.add(provider,label);});
+ server.handle(rpc.addGateway,async(input,{paseo})=>{await controller.ensureRuntime(paseo);return addGateway(controller.store,input);});
+ server.handle(rpc.rotateGateway,async({accountId,api_token})=>{await controller.ready;await rotateGateway(controller.store,accountId,api_token);return{};});
+ server.handle(rpc.listProfiles,async(_,{paseo})=>{await controller.ensureRuntime(paseo);return discoverProfiles(controller.store);});
+ server.handle(rpc.linkProfile,async({name},{paseo})=>{await controller.ensureRuntime(paseo);return linkProfile(controller.store,name);});
+ server.handle(rpc.setHeadroom,async({enabled})=>{await controller.ready;await controller.store.change(r=>{r.preferHeadroom=enabled;});return{};});
+ server.handle(rpc.moveCandidates,async({accountId},{paseo})=>{
+   await controller.ensureRuntime(paseo);
+   const state=await controller.store.read(), source=accountFrom(state,accountId);
+   if(source.provider!=="claude" || source.source==="gateway")throw new Error("Choose a Claude subscription.");
+   const ids=new Set(state.bindings.filter(b=>b.provider==="claude" && b.currentAccountId===accountId).map(b=>b.agentId));
+   if(source.source==="system"){
+     const seen=new Set<string>();
+     let cursor:string|undefined;
+     do{
+       const page=await paseo.agents.list({page:{limit:200,cursor}});
+       for(const {agent} of page.entries)if(agent.provider==="claude" && boundAccount(state,agent.id,"claude")===accountId)ids.add(agent.id);
+       if(!page.pageInfo.hasMore)break;
+       cursor=page.pageInfo.nextCursor??undefined;
+       if(!cursor||seen.has(cursor))throw new Error("The agent list changed. Try again.");
+       seen.add(cursor);
+     }while(cursor);
+   }
+   return [...ids];
+ });
+ server.handle(rpc.moveIdleAgent,async({agentId,from,to},{paseo})=>{
+   await controller.ensureRuntime(paseo);
+   const state=await controller.store.read(), accounts=[accountFrom(state,from),accountFrom(state,to)];
+   if(from===to||accounts.some(a=>a.provider!=="claude"||a.source==="gateway"))throw new Error("Choose two different Claude subscriptions.");
+   try{
+     await controller.switcher(paseo).switchTo(agentId,to,from);
+     return {moved:true, detail:"Moved"};
+   }catch(error){
+     return {moved:false, detail:error instanceof SwitchRefusal?error.message:"Could not move this agent. Check its current selection and account status."};
+   }
+ });
  server.handle(rpc.renameAccount,async({accountId,label})=>{await controller.ready;return controller.store.change(r=>{const a=accountFrom(r,accountId);a.label=label;return rpc.AccountSchema.parse(a);});});
  server.handle(rpc.removeAccount,async({accountId},{paseo})=>{await controller.remove(accountId,paseo);return{};});
  server.handle(rpc.setFallback,async({provider,enabled})=>{await controller.ready;await controller.store.change(r=>{r.fallback[provider]=enabled;});return{};});
@@ -112,6 +148,7 @@ export default function contribute(server:PluginServerContext){
    await controller.ready;
    const state=await controller.store.read(),target=state.accounts.find(a=>a.id===accountId);
    if(!target)throw new SwitchRefusal("Account not found.");
+   if(target.source==="gateway")throw new SwitchRefusal("Select a subscription for failover.");
    // Named at the click: the account the agent leaves now, with a launch not confirmed yet confirmed by its receipt.
    const currentId=await controller.accountOf(paseo,agentId,target.provider,state),from=labelOf(state,currentId);
    if(!currentId||!from)throw new SwitchRefusal("This agent's account is not confirmed yet. Choose an account in the account switcher instead.");
@@ -184,7 +221,7 @@ export default function contribute(server:PluginServerContext){
    if(!await controller.usage.checksEnabled())return;
    // An agent started with no app open may have a launch nothing has confirmed yet; its receipt confirms it now.
    const fromId=await controller.accountOf(paseo,agent.id,provider,state),from=labelOf(state,fromId);
-   if(!fromId||!from)return;
+   if(!fromId||!from||state.accounts.find(a=>a.id===fromId)?.source==="gateway")return;
    // The cache costs no provider request, so an ordinary completed turn ends here.
    if(completed&&!mayBeUsedUp((await controller.usage.list()).find(item=>item.accountId===fromId),Date.now()))return;
    // A full window read earlier still counts until its reset, so the account is read again before deciding.
@@ -194,7 +231,7 @@ export default function contribute(server:PluginServerContext){
    const latest=await controller.store.read();
    if(settled(latest)||boundAccount(latest,agent.id,provider)!==fromId)return;
    const model=snapshot?.agent.runtimeInfo?.model||snapshot?.agent.model||null,now=Date.now();
-   const decision=failoverDecision({currentId:fromId,accounts:latest.accounts.filter(a=>a.provider===provider),usage,model,now});
+   const decision=failoverDecision({currentId:fromId,accounts:latest.accounts.filter(a=>a.provider===provider && a.source!=="gateway"),usage,model,now});
    if(!decision)return;
    const offer=decision.kind==="offer"?latest.accounts.find(a=>a.id===decision.toId):undefined;
    const row:FailoverRow={rowId,state:offer?"offered":"none",from,fromId,to:offer?.label??null,toId:offer?.id??null,resetsAt:decision.resetsAt,error:null};

@@ -151,6 +151,7 @@ export function freshness(snapshot: UsageSnapshot | undefined, now = Date.now())
 }
 
 export function accountStatus(account: Account, snapshot: UsageSnapshot | undefined): { text: string; tone: Tone } {
+  if (account.source === "gateway") return { text: "Gateway configured", tone: "muted" };
   if (account.login) return { text: "sign-in in progress", tone: "warning" };
   if (account.authStatus === "ready" && snapshot?.status === "needs_auth") return { text: "limits require sign-in", tone: "warning" };
   return {

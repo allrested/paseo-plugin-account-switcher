@@ -6,12 +6,12 @@
 
 Use several Claude and ChatGPT/Codex subscription accounts in Paseo. Choose an account for each agent, switch the account of an existing chat, and see the limits of every saved account.
 
-Listed in the [Paseo plugin directory](https://paseo.sh/plugins/dutchakdev/account-switcher) and on [paseo.cafe](https://paseo.cafe/plugins/account-switcher/).
+The upstream subscription edition is listed in the [Paseo plugin directory](https://paseo.sh/plugins/dutchakdev/account-switcher) and on [paseo.cafe](https://paseo.cafe/plugins/account-switcher/).
 
 ![Accounts in Paseo: two Claude accounts with their 5-hour and weekly limits and the start of a Codex account. Personal details are redacted.](docs/assets/accounts.png)
 
 - **Sign in from Paseo.** Add an account, finish the official provider sign-in, and return to your chat.
-- **Switch per agent.** The account chip opens a dialog on desktop or a bottom sheet on mobile. A chat changes account only through **Apply**, `/account name`, the switch button the chat offers when a limit runs out, or automatic switching in that case, if you turn it on.
+- **Switch per agent.** The account chip opens a dialog on desktop or a bottom sheet on mobile. A chat can change accounts through **Move idle agents**, **Apply**, `/account name`, the switch button the chat offers when a limit runs out, or automatic switching in that case, if you turn it on.
 - **Keep your setup.** Profiles separate credentials while sharing provider settings, skills, and session history.
 - **Track account limits.** See used and remaining percentages, reset times, and freshness for every reported window.
 - **See them in Paseo's own usage.** Signed-in accounts appear in Paseo's Usage view, and an agent's usage popover shows the account that agent runs on.
@@ -20,16 +20,33 @@ Listed in the [Paseo plugin directory](https://paseo.sh/plugins/dutchakdev/accou
 - **See it in the chat.** A line in the chat records applied switches, and why a new agent did not start on the default.
 - **Use a default.** Choose the account used by new agents for each provider. When the latest limits show it would fail, a new agent starts on another signed-in account instead.
 
+## Claude accounts in this fork
+
+Open **Accounts → Claude** on the host that runs your agents.
+
+- **Add gateway** accepts a name, an Anthropic Messages-compatible base URL, and a bearer API token. Select the gateway in an agent’s account chip and press **Apply**, or name it with `PASEO_ACCOUNT_SWITCHER_ACCOUNT` when creating an agent. The endpoint receives that agent’s conversation. **Manage → API token → Replace** rotates the token for subsequent launches.
+- **Find local profiles** lists compatible `~/.claude-*` directories. Link a profile and press **Check sign-in**. Claude uses its existing secure-storage namespace with the same session history as your other Paseo agents. Removing the link preserves the original directory and login.
+- **Prefer the most available subscription** picks the Claude subscription with the most remaining quota in its tightest account-wide window. Fresh readings take precedence. A tie favors the default, or Current CLI when no default is set. Explicit account choices take precedence over balancing.
+- **Move idle agents** takes a source and destination subscription. It reports each agent’s outcome and skips busy agents and pending selections. Gateways require an explicit choice for each agent and stay outside subscription usage checks, bulk moves, and automatic failover.
+
+For this fork, install the Git source at the reviewed commit on your host:
+
+```sh
+paseo plugin install git:allrested/paseo-plugin-account-switcher --ref REVIEWED_COMMIT
+```
+
+The fork uses the same plugin ID and registry format as upstream. The registry gains account types upstream cannot read. Before switching back, remove linked profiles and gateways through Accounts, or restore the registry backup taken before the upgrade.
+
 ## Requirements
 
 - **Paseo 0.11.0 or newer**, including beta releases after 0.11.0, on a **macOS or Linux** daemon and on the connected client.
 - **Node.js 22.12.0 or newer**, with npm.
 - The official **Paseo** CLI and at least one of **Claude Code** or **Codex** available to the daemon. A provider whose CLI is missing is skipped; after installing it, reload the plugin and select **Enable** in its section.
-- Claude or ChatGPT subscription authentication. API keys and custom authentication/provider overrides are unsupported.
+- Claude or ChatGPT subscription authentication for subscription profiles. A Claude gateway uses its own HTTPS endpoint and bearer token. HTTP is also available on loopback for a local gateway.
 
 The interface is in English. Reset dates use the viewing device's local time zone. See [installation](docs/installation.md) for remote hosts and [verification](docs/verification.md) for the scope of recorded testing.
 
-## Install
+## Install the upstream edition
 
 Paseo plugins are trusted, unsandboxed code with the daemon user's access to files, processes, credentials, and network. Account Switcher reads your Claude and Codex sign-ins to identify accounts and check their limits, and checking limits sends no model messages. The only message it sends to an agent is **Continue.**, after you switch from the row a used-up limit adds to the chat, or after an automatic switch that followed a failed turn. The commands below target the local daemon; for another host, see [remote daemons](docs/installation.md#remote-daemons).
 

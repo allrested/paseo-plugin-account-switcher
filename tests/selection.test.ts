@@ -81,3 +81,13 @@ describe("the order in which a new agent tries accounts", () => {
     expect(launchOrder({ defaultId: "default", accounts: pool, usage: [], model: null, now })).toEqual(["default", "spare"]);
   });
 });
+
+it("prefers the freshest usable headroom, keeping the default on ties and ignoring stale readings", () => {
+  const accounts = ["primary","more","old"].map(ready);
+  const usage = [snapshot("primary",[window(60)]),snapshot("more",[window(20)]),snapshot("old",[window(1)],{ status:"stale" })];
+  const input = { defaultId:"primary", accounts, usage, model:null, now };
+  expect(launchOrder(input)[0]).toBe("primary");
+  expect(launchOrder({ ...input, preferHeadroom:true })).toEqual(["more","primary","old"]);
+  usage[0] = snapshot("primary",[window(20)]);
+  expect(launchOrder({ ...input, preferHeadroom:true })[0]).toBe("primary");
+});

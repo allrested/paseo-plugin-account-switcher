@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added in the allrested fork
+
+- Named Claude gateways with a custom endpoint and separately stored, replaceable bearer token. Select a gateway per agent.
+- Discover and link existing Claude subscription profiles, prefer subscriptions with more headroom for new agents, and move idle agents between subscriptions with per-agent results.
+
 ### Fixed
 
 - An agent no longer exits at once in a project that pins an old Node through mise, asdf or nvm (#58). The launchers began with `#!/usr/bin/env node` and took the first `node` on the agent's PATH, which could be too old to parse them. Each launcher is now a short shell script that runs the launcher bundle with the Node that runs the plugin; the provider CLI and its tools still see the project's PATH.

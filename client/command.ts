@@ -33,7 +33,7 @@ export type DefaultCommand = { id: string; title: string; provider: Provider; ac
 /** Command Center entries that make a signed-in account its provider's default. */
 export function defaultCommands(state: AccountState): DefaultCommand[] {
   return (["codex", "claude"] as const).flatMap((provider) => state.accounts
-    .filter((account) => account.provider === provider && accountAvailable(account) && state.defaults[provider] !== account.id)
+    .filter((account) => account.provider === provider && account.source !== "gateway" && accountAvailable(account) && state.defaults[provider] !== account.id)
     .map((account) => ({ id: `default-${account.id}`, title: `Make “${account.label}” the ${shortName[provider]} default`, provider, accountId: account.id })));
 }
 
@@ -58,7 +58,7 @@ export async function runAccountCommand(provider: Provider | null, agentId: stri
   await deps.prepare(target.account.id);
   const [agent, usage] = await Promise.all([deps.agent(), deps.usage().catch(() => [])]);
   const risk = switchRisk({ label: target.account.label, models: usage.find((item) => item.accountId === target.account.id)?.models }, agentModel(agent));
-  if (risk || !idleForSwitch(agent)) { deps.openSwitcher(); return "pending"; }
+  if (target.account.source === "gateway" || risk || !idleForSwitch(agent)) { deps.openSwitcher(); return "pending"; }
   await deps.apply(target.account.id);
   return "applied";
 }

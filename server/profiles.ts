@@ -23,7 +23,7 @@ export function assertSubscriptionEnvironment(provider: Provider, environment: R
   if (conflicting) throw new Error(`${provider === "claude" ? "Claude" : "Codex"} authentication overrides in environment variables are incompatible with subscription accounts. Remove them from the provider settings and daemon environment.`);
 }
 const AUTH_CONFIG_KEYS = /(^|\.)(model_provider|model_providers|chatgpt_base_url|forced_login_method|forced_chatgpt_workspace_id|cli_auth_credentials_store|sqlite_home|codex_home)(\.|$)/;
-function assertClaudeSettings(settings: Record<string, unknown>) {
+export function assertClaudeSettings(settings: Record<string, unknown>) {
   if (settings.apiKeyHelper || Object.keys(settings.env ?? {}).some(key => [...AUTH_ENV,"CLAUDE_CONFIG_DIR","CODEX_HOME"].includes(key))) throw new Error("Claude settings contain authentication overrides.");
 }
 function assertCodexSettings(config: Record<string, unknown>) {

@@ -16,6 +16,7 @@ export function profileEnv(registry: Registry, agentId: string, provider: string
   // The same choice the launcher makes: the account an agent is launching on wins over the one it ran on.
   const accountId = binding?.launchAccountId ?? binding?.currentAccountId;
   const account = accountId ? registry.accounts.find(candidate => candidate.id === accountId && candidate.provider === provider) : undefined;
-  if (account?.source !== "managed") return {};
+  if (!account || account.source === "system") return {};
+  if (account.source === "linked" && account.credentialHome) return { CLAUDE_CONFIG_DIR: account.home, CLAUDE_SECURESTORAGE_CONFIG_DIR: account.credentialHome };
   return provider === "claude" ? { CLAUDE_CONFIG_DIR: account.home } : { CODEX_HOME: account.home };
 }
