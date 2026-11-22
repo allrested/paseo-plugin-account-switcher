@@ -1,0 +1,23 @@
+← Home
+Usage Dashboard
+My usage
+
+Showing 2026-11-22 → 2026-11-22
+
+SESSIONS
+
+3
+
+REQUESTS
+
+2,059
+
+OUTPUT TOKENS
+
+2.2M
+
+2,158,984
+
+EST. COST
+
+$38.20

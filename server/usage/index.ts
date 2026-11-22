@@ -1,14 +1,17 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { UsageSnapshotSchema, type Provider, type UsageSnapshot, type UsageWindow } from "../../shared/contracts";
+import { UsageSnapshotSchema, type GatewayUsage, type Provider, type UsageBalance, type UsageSnapshot, type UsageWindow } from "../../shared/contracts";
 import { collectClaudeUsage } from "./claude";
 import { collectCodexUsage } from "./codex";
+import { GatewayUsageError, readGatewayUsage, type GatewayCredentials } from "./gateway";
 import { object } from "./parsers";
 
-export type QuotaAccount = { id: string; provider: Provider; home: string; command: string[]; env: NodeJS.ProcessEnv; identityKey: string | null; generation: number; credentialVersion?: string; identityCredentialVersion?: string; requireIdentityVerification?: boolean };
+export type QuotaAccount = { id: string; provider: Provider; home: string; command: string[]; env: NodeJS.ProcessEnv; identityKey: string | null; generation: number; credentialVersion?: string; identityCredentialVersion?: string; requireIdentityVerification?: boolean;
+  /** Set for a Claude gateway that has a usage reader. It has no CLI command, and `identityKey` is the fixed `gateway:<id>`. */
+  gateway?: { usage: GatewayUsage; credentials: () => Promise<GatewayCredentials> } };
 export { readCredentialVersion } from "./credentials";
-export type CollectedUsage = { identityKey: string | null; plan: string | null; windows: UsageWindow[]; models?: string[] | null; usageAllowed?: boolean | null };
+export type CollectedUsage = { identityKey: string | null; plan: string | null; windows: UsageWindow[]; models?: string[] | null; usageAllowed?: boolean | null; balances?: UsageBalance[]; fetchedAt?: string };
 export type FetchUsage = (account: QuotaAccount, signal?: AbortSignal) => Promise<CollectedUsage>;
 export type AccountReadOptions = { verifyAccountId?: string };
 export type UsageOptions = { getAccounts: (input?: AccountReadOptions) => Promise<QuotaAccount[]>; fetchUsage?: FetchUsage; cachePath?: string; now?: () => number; checksEnabled?: () => Promise<boolean> };
@@ -18,10 +21,10 @@ export async function usageChecksEnabled(configPath: string): Promise<boolean> {
   try {return JSON.parse(await readFile(configPath,"utf8"))?.daemon?.usage?.enabled!==false;} catch {return true;}
 }
 export class UsageError extends Error {
-  constructor(public readonly status: "needs_auth" | "unavailable", public readonly code: string, public readonly retryAfterMs?: number) {
-    super(code === "keychain_unavailable" ? "Cannot access macOS Keychain. Unlock it and allow Claude Code to read its credentials, then check sign-in again."
+  constructor(public readonly status: "needs_auth" | "unavailable", public readonly code: string, public readonly retryAfterMs?: number, message?: string) {
+    super(message ?? (code === "keychain_unavailable" ? "Cannot access macOS Keychain. Unlock it and allow Claude Code to read its credentials, then check sign-in again."
       : code === "credential_read_failed" ? "Cannot read saved credentials. Check profile permissions and, on macOS, unlock Keychain and allow Claude Code access."
-      : status === "needs_auth" ? "Sign in again to retrieve limits." : "The limits service is temporarily unavailable.");
+      : status === "needs_auth" ? "Sign in again to retrieve limits." : "The limits service is temporarily unavailable."));
   }
 }
 type Entry = { fingerprint: string; accountFingerprint: string; provenIdentity: boolean; snapshot: UsageSnapshot; success?: UsageSnapshot; attempts: number; attemptedAt: number | null; retryAt: number };
@@ -32,10 +35,15 @@ const LEASE = 90000;
 const MAX_BACKOFF = 1800000;
 
 function fingerprint(account: QuotaAccount, includeCredentials=true): string {
-  return createHash("sha256").update(JSON.stringify([account.provider, account.home, account.identityKey, account.generation, account.command, includeCredentials?account.credentialVersion:undefined])).digest("hex");
+  return createHash("sha256").update(JSON.stringify([account.provider, account.home, account.identityKey, account.generation, account.command, includeCredentials?account.credentialVersion:undefined, ...(account.gateway?[account.gateway.usage]:[])])).digest("hex");
 }
 const identityProven = (account:QuotaAccount) => account.identityKey!==null&&!!account.credentialVersion?.startsWith("present:")&&account.credentialVersion===account.identityCredentialVersion;
-const fetchProvider: FetchUsage = (account, signal) => account.provider === "codex" ? collectCodexUsage(account, signal) : collectClaudeUsage(account, {}, signal);
+// A gateway's reason is already written for the user, and a gateway has no sign-in to ask for: every failure is `unavailable`.
+async function collectGatewayUsage(account: QuotaAccount, signal?: AbortSignal): Promise<CollectedUsage> {
+  try { return { identityKey: account.identityKey, ...await readGatewayUsage(account.gateway!.usage, account.gateway!.credentials, { signal, accountId: account.id }) }; }
+  catch (error) { throw error instanceof GatewayUsageError ? new UsageError("unavailable", "gateway_usage", error.retryAfterMs, error.message) : new UsageError("unavailable", "gateway_usage", undefined, "The gateway's usage could not be read."); }
+}
+const fetchProvider: FetchUsage = (account, signal) => account.gateway ? collectGatewayUsage(account, signal) : account.provider === "codex" ? collectCodexUsage(account, signal) : collectClaudeUsage(account, {}, signal);
 
 export function createUsageService(options: UsageOptions) {
   const entries = new Map<string, Entry>();
@@ -170,7 +178,7 @@ export function createUsageService(options: UsageOptions) {
         if(requested&&account.credentialVersion!==verified.credentialVersion&&(!identityProven(account)||!identityProven(verified)||result?.identityKey!==account.identityKey))failure??=new UsageError("unavailable","response_identity_unverified");
         const checkedAt = new Date(now()).toISOString();
         if (result && !failure) {
-          const snapshot: UsageSnapshot = {accountId:account.id,provider:account.provider,status:"ok",plan:result.plan,windows:result.windows,models:result.models??null,usageAllowed:result.usageAllowed??null,fetchedAt:checkedAt,checkedAt,nextRetryAt:null,error:null};
+          const snapshot: UsageSnapshot = {accountId:account.id,provider:account.provider,status:"ok",plan:result.plan,windows:result.windows,models:result.models??null,usageAllowed:result.usageAllowed??null,fetchedAt:result.fetchedAt??checkedAt,checkedAt,nextRetryAt:null,error:null,...(account.gateway?{balances:result.balances??[]}:{})};
           entry.snapshot=snapshot;entry.success=account.identityKey===null?undefined:snapshot;entry.attempts=0;entry.retryAt=0;
         } else {
           const error=failure??new UsageError("unavailable","request_failed");
@@ -179,7 +187,7 @@ export function createUsageService(options: UsageOptions) {
           entry.retryAt=now()+backoff;
           if (error.status==="needs_auth") entry.success=undefined;
           const previous=entry.success;
-          entry.snapshot={accountId:account.id,provider:account.provider,status:error.status==="needs_auth"?"needs_auth":previous?"stale":"unavailable",plan:previous?.plan??null,windows:previous?.windows??[],models:previous?.models??null,usageAllowed:previous?.usageAllowed??null,fetchedAt:previous?.fetchedAt??null,checkedAt,nextRetryAt:new Date(entry.retryAt).toISOString(),error:error.message};
+          entry.snapshot={accountId:account.id,provider:account.provider,status:error.status==="needs_auth"?"needs_auth":previous?"stale":"unavailable",plan:previous?.plan??null,windows:previous?.windows??[],models:previous?.models??null,usageAllowed:previous?.usageAllowed??null,fetchedAt:previous?.fetchedAt??null,checkedAt,nextRetryAt:new Date(entry.retryAt).toISOString(),error:error.message,...(account.gateway?{balances:previous?.balances??[]}:{})};
         }
         await persist();
       } finally { release(); }

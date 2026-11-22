@@ -103,3 +103,24 @@ protocol, parsing, isolation, scheduling and cache behavior. They do not establi
 live access to a user's subscription or real multi-account acceptance.
 
 Protocol reference: [OpenAI Codex app-server account types](https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/src/protocol/v2/account.rs).
+
+## Gateways
+
+A Claude gateway joins the scheduler only when it has a usage reader (`usage` on its
+registry record). Its `QuotaAccount` carries `gateway: { usage, credentials }`, no CLI
+command, and the fixed identity `gateway:<account id>`, so its last reading is cached
+and shown as `stale` after a failed read like any other account. Identity
+verification and credential versions do not apply to it.
+
+`server/usage/gateway.ts` does the reading. Its errors are written for the user and
+pass through `UsageError`'s optional message unchanged. A gateway failure is always
+`unavailable`, never `needs_auth`: a 401 or 403 means the saved token is wrong, and
+there is no sign-in to offer. A `Retry-After` on a 429 sets the backoff. The reader's
+setting is part of the account's fingerprint, so changing it drops the old reading.
+
+A `dashboard` reader (`server/usage/dashboard/`) opens the listed pages in the shared
+browser over its debugging port, reads the visible text and applies caption rules
+(`rules.ts`). It never types and does not use the gateway's token. Reads are spaced
+at least a minute apart per account, whatever the scheduler asks; the form's Test is
+not held back.
+

@@ -70,7 +70,7 @@ export function AgentSwitcher({ theme, host, agentId, onChanged, openAccounts, c
     </View> : null}
     {unconfirmed
       ? <Notice theme={theme} tone="warning">Account not confirmed. Choose an account below and apply it when the agent is idle.</Notice>
-      : provider && current?.source !== "gateway" ? <QuotaSummary theme={theme} snapshot={snapshot} now={now} compact
+      : provider && (current?.source !== "gateway" || current.usage) ? <QuotaSummary theme={theme} snapshot={snapshot} now={now} compact
         onRefresh={current ? () => action.run(() => refresh({ accountId: current.id })) : undefined} refreshing={action.isPending} /> : null}
     {candidates.length ? <View style={{ gap: 6 }}>
       <Text style={{ ...muted(theme), fontWeight: "600" }}>Switch to</Text>

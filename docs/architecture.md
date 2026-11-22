@@ -175,4 +175,6 @@ The root is `$PASEO_HOME/account-switcher`, or `~/.paseo/account-switcher` by de
 
 The registry includes account labels, identity metadata, original commands, defaults, per-provider fallback and automatic-failover choices, and bindings. Access and refresh tokens stay in provider-owned credential storage. They are not returned through plugin RPCs or written to the limits cache. The sign-in RPC exposes only the temporary authorization information needed for that attempt.
 
+A gateway's registry record may hold `usage`, the way its usage is read: an endpoint path with field names, a dashboard's pages with the captions to read and the shared browser's debugging address, or a file path. It holds no secret; the gateway's token stays in `accounts/<id>/gateway.json`. The limits cache keeps a gateway's last reading under the fixed identity `gateway:<account id>`.
+
 Deleting a managed account removes its local profile and its exact Claude Keychain item where applicable. Shared provider history remains. Removing the Paseo plugin installation does not remove this separate data directory. Back it up as private authentication-related data; do not attach it to public issues.

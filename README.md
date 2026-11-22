@@ -26,8 +26,34 @@ Open **Accounts → Claude** on the host that runs your agents.
 
 - **Add gateway** accepts a name, an Anthropic Messages-compatible base URL, and a bearer API token. Select the gateway in an agent’s account chip and press **Apply**, or name it with `PASEO_ACCOUNT_SWITCHER_ACCOUNT` when creating an agent. The endpoint receives that agent’s conversation. **Manage → API token → Replace** rotates the token for subsequent launches.
 - **Find local profiles** lists compatible `~/.claude-*` directories. Link a profile and press **Check sign-in**. Claude uses its existing secure-storage namespace with the same session history as your other Paseo agents. Removing the link preserves the original directory and login.
+- **Import as gateway.** **Find local profiles** also lists Paseo's own custom Claude providers that carry a gateway address and a bearer token in their settings, each with **Import as gateway**. Importing adds the gateway with that address and token; the provider entry in Paseo's settings stays as it is, including its model list. Such a profile cannot be linked as a subscription: it has no Claude sign-in to check.
 - **Prefer the most available subscription** picks the Claude subscription with the most remaining quota in its tightest account-wide window. Fresh readings take precedence. A tie favors the default, or Current CLI when no default is set. Explicit account choices take precedence over balancing.
 - **Move idle agents** takes a source and destination subscription. It reports each agent’s outcome and skips busy agents and pending selections. Gateways require an explicit choice for each agent and stay outside subscription usage checks, bulk moves, and automatic failover.
+
+### Gateway usage
+
+A gateway shows no usage until you tell Accounts how to read it. Open the gateway's **Manage → Usage** and choose:
+
+- **Off.** Nothing is read. This is the default.
+- **Usage endpoint.** A JSON usage endpoint on the gateway's own address. Enter its path and where each value is in the reply (for example `data.total_used`), a unit and a divisor. The request carries the gateway's token and goes only to the gateway's own address; an endpoint on another host is refused. **Fill in for BDDev** enters the values for `api.bddevlab.online`.
+- **Usage dashboard.** For a gateway that shows usage only on a web page. Accounts opens the pages you list in the shared browser, which must already be signed in to the dashboard, and gathers the numbers from the page text. Each reading is a caption on the page (for example `EST. COST` or `Weekly · all models`) and the number that follows it; a caption that appears once per account gives one reading per account. Nothing is typed in the browser, and the gateway's token is not sent. If the browser lands on a sign-in page, the reader can click an account that is already signed in there; otherwise the reading asks you to sign in. A dashboard is read at most once a minute.
+- **External reading.** A file on the host that another tool keeps up to date. A reading older than 30 minutes shows as stale.
+
+**Test** shows what the reader finds before you **Save**. For a dashboard it also shows the page text, and pressing a line uses it as a reading's caption. The card, the agent's account switcher and Paseo's Usage view then show the reading: amounts such as "412 of 1,000 credits left" and percent windows. A field or caption that is missing, or a value that is not a number, makes the reading unavailable and names what was not found; it is never shown as 0. Usage is shown only: gateways stay out of headroom balancing, automatic failover and idle moves.
+
+The external file holds the time of the reading and a Paseo usage report:
+
+```json
+{
+  "fetchedAt": "2026-11-22T06:00:00.000Z",
+  "report": {
+    "status": "available",
+    "planLabel": "Team A",
+    "windows": [{ "id": "weekly", "label": "Weekly", "usedPct": 40, "resetsAt": "2026-11-25T00:00:00.000Z" }],
+    "balances": [{ "id": "today", "label": "Today", "used": 3.2, "unit": "usd" }]
+  }
+}
+```
 
 For this fork, install the Git source at the reviewed commit on your host:
 

@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, readdir, realpath, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { AccountSchema, GatewayInput } from "../shared/contracts";
+import { AccountSchema, GatewayInput, GatewayUsageSchema, type GatewayUsage } from "../shared/contracts";
+import { GatewayUsageError, readGatewayUsage, type GatewayDependencies } from "./usage/gateway";
+import { DashboardMissingError, type DashboardReading } from "./usage/dashboard";
 import { atomicWrite, isMissing } from "./files";
 import { assertClaudeSettings, prepareProfile } from "./profiles";
 import { accountFrom, type AccountStore, type Registry, type StoredAccount } from "./store";
@@ -121,4 +123,65 @@ export async function gatewayArguments(root: string, original: string[], endpoin
   await atomicWrite(file, JSON.stringify({ ...settings, env: { ...settings.env, ...env } }));
   args[last] = inline ? "--settings=" + file : file;
   return { args, file };
+}
+
+function gatewayFrom(state: { accounts: StoredAccount[] }, accountId: string): StoredAccount {
+  const account = state.accounts.find(a => a.id === accountId);
+  if (!account || account.source !== "gateway" || account.provider !== "claude") throw new Error("Choose a Claude gateway.");
+  return account;
+}
+/** Saves how a gateway's usage is read; `null` turns the reading off. The setting holds no secret. */
+export async function setGatewayUsage(store: AccountStore, accountId: string, usage: GatewayUsage | null) {
+  const parsed = usage === null ? null : GatewayUsageSchema.parse(usage);
+  await store.change(state => {
+    const account = gatewayFrom(state, accountId);
+    if (parsed) account.usage = parsed; else delete account.usage;
+  });
+}
+/** Runs a reader once without saving it, so the form can show what it finds. The result carries amounts and labels only. */
+export async function testGatewayUsage(store: AccountStore, accountId: string, usage: GatewayUsage, deps: GatewayDependencies = {}) {
+  const parsed = GatewayUsageSchema.parse(usage);
+  const account = gatewayFrom(await store.read(), accountId);
+  try {
+    // A test is the user asking now: it is not held back by the once-a-minute spacing of dashboard reads.
+    const reading: DashboardReading = await readGatewayUsage(parsed, async () => { const env = await gatewayEnvironment(store.root, account); return { baseUrl: env.ANTHROPIC_BASE_URL, token: env.ANTHROPIC_AUTH_TOKEN }; }, { ...deps, accountId: `test:${accountId}`, force: true });
+    return { ok: true, plan: reading.plan, windows: reading.windows, balances: reading.balances, error: null, ...(reading.lines ? { lines: reading.lines } : {}) };
+  } catch (error) {
+    const partial = error instanceof DashboardMissingError ? error.partial : null;
+    return { ok: false, plan: null, windows: partial?.windows ?? [], balances: partial?.balances ?? [], error: error instanceof GatewayUsageError ? error.message : "The gateway's usage could not be read.", ...(partial?.lines ? { lines: partial.lines } : {}) };
+  }
+}
+
+type GatewayProvider = { provider: string; label: string; baseUrl: string; token: string };
+/**
+ * Paseo's own custom Claude providers that are really gateways: an entry of `agents.providers` in Paseo's config.json
+ * that extends `claude` and carries a base URL and a bearer token in its `env`. Read only; the config is never changed.
+ */
+async function gatewayProviders(configPath: string): Promise<GatewayProvider[]> {
+  let providers: unknown;
+  try { providers = JSON.parse(await readFile(configPath, "utf8"))?.agents?.providers; } catch { return []; }
+  if (!providers || typeof providers !== "object") return [];
+  const found: GatewayProvider[] = [];
+  for (const [provider, entry] of Object.entries(providers as Record<string, { extends?: unknown; label?: unknown; env?: Record<string, unknown> } | null>)) {
+    if (!entry || typeof entry !== "object" || (provider !== "claude" && entry.extends !== "claude")) continue;
+    const url = entry.env?.ANTHROPIC_BASE_URL, token = entry.env?.ANTHROPIC_AUTH_TOKEN;
+    if (typeof url !== "string" || typeof token !== "string") continue;
+    const label = typeof entry.label === "string" && entry.label.trim() ? entry.label : provider;
+    const parsed = GatewayInput.safeParse({ label: label.slice(0, 80), base_url: url.trim().replace(/\/+$/, ""), api_token: token });
+    if (parsed.success) found.push({ provider, label: parsed.data.label, baseUrl: parsed.data.base_url, token: parsed.data.api_token });
+  }
+  return found;
+}
+const sameGateway = (state: { accounts: StoredAccount[] }, baseUrl: string) => state.accounts.some(a => a.source === "gateway" && a.baseUrl?.replace(/\/+$/, "") === baseUrl);
+/** The providers that can be imported: those whose gateway is not in Accounts yet. No token leaves this function. */
+export async function discoverGatewayProviders(store: AccountStore, configPath: string) {
+  const state = await store.read();
+  return (await gatewayProviders(configPath)).filter(p => !sameGateway(state, p.baseUrl)).map(({ provider, label, baseUrl }) => ({ provider, label, baseUrl }));
+}
+/** Adds a gateway with the base URL and token of one of Paseo's custom providers. The provider entry stays as it is. */
+export async function importGatewayProvider(store: AccountStore, configPath: string, provider: string) {
+  const found = (await gatewayProviders(configPath)).find(p => p.provider === provider);
+  if (!found) throw new Error("This provider has no gateway to import.");
+  if (sameGateway(await store.read(), found.baseUrl)) throw new Error("This gateway is already in Accounts.");
+  return addGateway(store, { label: found.label, base_url: found.baseUrl, api_token: found.token });
 }

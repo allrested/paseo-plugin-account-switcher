@@ -13,9 +13,51 @@ export const LoginSessionSchema = z.object({
   canSubmitCode: z.boolean(), error: z.string().nullable(), expiresAt: z.string().nullable(),
 });
 export type LoginSession = z.infer<typeof LoginSessionSchema>;
+export const UsageUnitSchema = z.enum(["credits", "usd", "requests", "tokens"]);
+export type UsageUnit = z.infer<typeof UsageUnitSchema>;
+// A dot path into a JSON reply, such as `data.total_used`; a numeric segment indexes an array.
+const FieldPath = z.string().max(200).regex(/^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$/, "Use names separated by dots, such as data.total_used.");
+const UsageFields = z.object({
+  used: FieldPath.optional(), limit: FieldPath.optional(), remaining: FieldPath.optional(), usedPercent: FieldPath.optional(),
+  resetsAt: FieldPath.optional(), plan: FieldPath.optional(), unlimited: FieldPath.optional(),
+}).refine(f => Boolean(f.used || f.limit || f.remaining || f.usedPercent), "Name the field for used, limit, remaining or percent.");
+const DashboardPage = z.string().max(2048).refine(value => {
+  try { const url = new URL(value); return url.protocol === "https:" && !url.username && !url.password && !/[\s\\]/.test(value); } catch { return false; }
+}, "Use an https address without credentials.");
+/** How a gateway's usage is read. `endpoint` asks the gateway's own origin with its token; `file` reads what another tool wrote; `dashboard` reads a signed-in page through the shared browser. */
+export const GatewayUsageSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("endpoint"),
+    path: z.string().max(512).regex(/^\/(?!\/)[^\s\\#]*$/, "Use a path on the gateway, starting with /."),
+    fields: UsageFields, unit: UsageUnitSchema, divisor: z.number().positive().finite().default(1),
+    label: z.string().trim().min(1).max(40).default("Balance"),
+  }),
+  z.object({ kind: z.literal("file"), path: z.string().max(1024).regex(/^\/[^\0]*$/, "Use an absolute path.") }),
+  z.object({
+    kind: z.literal("dashboard"),
+    // The shared browser's remote-debugging address. The reader opens a tab there; it never types.
+    browser: z.object({
+      host: z.string().min(1).max(255).regex(/^[A-Za-z0-9.-]+$/, "Enter the browser's host name or IP address."),
+      port: z.number().int().min(1).max(65535),
+    }).default({ host: "127.0.0.1", port: 9222 }),
+    pages: z.array(DashboardPage).min(1).max(4),
+    accountTile: z.string().trim().min(1).max(200).optional(),
+    between: z.array(z.object({ after: z.string().trim().min(1).max(120).optional(), before: z.string().trim().min(1).max(120).optional() })).max(4).optional(),
+    readings: z.array(z.object({
+      label: z.string().trim().min(1).max(40), find: z.string().trim().min(1).max(120), type: z.enum(["percent", "amount"]),
+      unit: UsageUnitSchema.optional(), page: z.number().int().min(0).max(3).optional(),
+    }).refine(r => r.type !== "amount" || Boolean(r.unit), "Choose a unit for an amount.")).min(1).max(12),
+  }).refine(d => d.readings.every(r => (r.page ?? 0) < d.pages.length), "A reading names a page that is not listed."),
+]);
+export type GatewayUsage = z.infer<typeof GatewayUsageSchema>;
+export const BDDEV_HOST = "api.bddevlab.online";
+export const BDDEV_USAGE: GatewayUsage = {
+  kind: "endpoint", path: "/api/usage/token/", unit: "credits", divisor: 100000, label: "Credits",
+  fields: { used: "data.total_used", limit: "data.total_granted", remaining: "data.total_available", plan: "data.name", unlimited: "data.unlimited_quota" },
+};
 export const AccountSchema = z.object({
   id: z.string(), provider: ProviderSchema, label: z.string(),
-  source: z.enum(["managed", "system", "linked", "gateway"]), baseUrl: z.string().optional(), email: z.string().nullable(),
+  source: z.enum(["managed", "system", "linked", "gateway"]), baseUrl: z.string().optional(), usage: GatewayUsageSchema.optional(), email: z.string().nullable(),
   plan: z.string().nullable(), authStatus: z.enum(["ready", "needs_auth", "unknown", "error"]),
   createdAt: z.string(),
   login: z.union([z.object({sessionId:z.string(),mode:LoginModeSchema}),z.object({workspaceId:z.string(),terminalId:z.string()})]).nullable().optional(),
@@ -49,10 +91,18 @@ export const UsageWindowSchema = z.object({
   scope: z.enum(["account", "model", "spend"]).optional(),
 });
 export type UsageWindow = z.infer<typeof UsageWindowSchema>;
+// An amount instead of a percentage: credits, money, requests or tokens used and left.
+export const UsageBalanceSchema = z.object({
+  id: z.string(), label: z.string(), used: z.number().nullable(), remaining: z.number().nullable(), limit: z.number().nullable(),
+  unit: UsageUnitSchema, detail: z.string().nullable().optional(),
+});
+export type UsageBalance = z.infer<typeof UsageBalanceSchema>;
 export const UsageSnapshotSchema = z.object({
   accountId: z.string(), provider: ProviderSchema,
   status: z.enum(["ok", "stale", "needs_auth", "unavailable"]),
   plan: z.string().nullable(), windows: z.array(UsageWindowSchema),
+  // Amounts a gateway reports. Absent on subscriptions and on snapshots saved before gateways had usage.
+  balances: z.array(UsageBalanceSchema).optional(),
   // Model IDs the account's plan offers; null or absent when the provider does not list them.
   models: z.array(z.string()).nullable().optional(),
   // The provider's own verdict that ordinary usage is allowed (Codex `ordinaryUsageAllowed`); null when not reported.
@@ -78,6 +128,14 @@ export const GatewayInput = z.object({
 });
 export const addGateway = defineRpc({ name: "claude.gateway-add", input: GatewayInput, output: AccountSchema });
 export const rotateGateway = defineRpc({ name: "claude.gateway-rotate", input: AccountId.extend({ api_token: GatewayInput.shape.api_token }), output: Empty });
+export const setGatewayUsage = defineRpc({ name: "claude.gateway-usage-set", input: AccountId.extend({ usage: GatewayUsageSchema.nullable() }), output: Empty });
+export const GatewayUsageTestSchema = z.object({ ok: z.boolean(), plan: z.string().nullable(), windows: z.array(UsageWindowSchema), balances: z.array(UsageBalanceSchema), error: z.string().nullable() , lines: z.array(z.array(z.string())).optional() });
+export type GatewayUsageTest = z.infer<typeof GatewayUsageTestSchema>;
+export const testGatewayUsage = defineRpc({ name: "claude.gateway-usage-test", input: AccountId.extend({ usage: GatewayUsageSchema }), output: GatewayUsageTestSchema });
+export const GatewayProviderSchema = z.object({ provider: z.string(), label: z.string(), baseUrl: z.string() });
+export type GatewayProvider = z.infer<typeof GatewayProviderSchema>;
+export const listGatewayProviders = defineRpc({ name: "claude.gateway-providers", input: Empty, output: z.array(GatewayProviderSchema) });
+export const importGatewayProvider = defineRpc({ name: "claude.gateway-import", input: z.object({ provider: z.string().min(1).max(128) }), output: AccountSchema });
 export const listProfiles = defineRpc({ name: "claude.profiles", input: Empty, output: z.array(z.string()) });
 export const linkProfile = defineRpc({ name: "claude.link", input: z.object({ name: z.string().max(255) }), output: AccountSchema });
 export const setHeadroom = defineRpc({ name: "claude.headroom", input: z.object({ enabled: z.boolean() }), output: Empty });
