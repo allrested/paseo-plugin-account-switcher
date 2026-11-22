@@ -79,7 +79,8 @@ export function AgentSwitcher({ theme, host, agentId, onChanged, openAccounts, c
         const prepared = pending?.id === account.id;
         const available = accountAvailable(account);
         const blocked = disabled || actual || !available;
-        const detail = account.source === "gateway" ? `Gateway · ${account.baseUrl}` : account.login ? "sign-in in progress · finish in Accounts"
+        // A gateway with a usage reader is described like a subscription, by what is left; without one, by its address.
+        const detail = account.source === "gateway" ? (account.usage ? usageSummary(usage.data?.accounts.find((item) => item.accountId === account.id), now) : `Gateway · ${account.baseUrl}`) : account.login ? "sign-in in progress · finish in Accounts"
           : account.authStatus === "error" ? "cannot access sign-in · check credentials in Accounts"
           : account.authStatus === "unknown" ? "sign-in not confirmed · check in Accounts"
           : !available ? "sign-in required · check in Accounts"
