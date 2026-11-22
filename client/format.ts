@@ -50,7 +50,12 @@ export function usageSummary(snapshot: UsageSnapshot | undefined, now = Date.now
   if (snapshot.status === "needs_auth") return "sign-in required";
   if (snapshot.status === "unavailable") return "limits unavailable";
   const known = snapshot.windows.filter((quota) => quota.usedPercent !== null && Number.isFinite(quota.usedPercent));
-  if (!known.length) return snapshot.status === "stale" ? "limits stale" : "limits —";
+  if (!known.length) {
+    // A gateway may report an amount instead of a percentage: "37.1% left · 9,300 credits", or "$38.20 used" without a limit.
+    const balance = snapshot.balances?.find(item => item.used !== null || item.remaining !== null || item.limit !== null || item.detail);
+    if (balance) return `${balanceSummary(balance)}${snapshot.status === "stale" ? " · stale" : ""}`;
+    return snapshot.status === "stale" ? "limits stale" : "limits —";
+  }
   const limiting = known.reduce((left, right) => left.usedPercent! >= right.usedPercent! ? left : right);
   const stale = snapshot.status === "stale" || windowIsExpired(limiting, now);
   return `${percent(remainingPercent(limiting.usedPercent))} left${stale ? " · stale" : ""}`;
@@ -182,6 +187,13 @@ export function formatBalance(balance: UsageBalance): string {
     : used !== null ? `${amount(used, unit)}${name} used`
     : limit !== null ? `${amount(limit, unit)}${name} limit` : null;
   return base ? (balance.detail ? `${base} · ${balance.detail}` : base) : balance.detail ?? "no data";
+}
+/** One short phrase for a list row: what is left as a percent and an amount when there is a limit, otherwise the amount alone. */
+export function balanceSummary(balance: UsageBalance): string {
+  const used = balancePercent(balance);
+  if (used === null || balance.limit === null) return formatBalance(balance);
+  const left = balance.remaining ?? balance.limit - (balance.used ?? 0);
+  return `${percent(remainingPercent(used))} left · ${amount(left, balance.unit)}${balance.unit === "usd" ? "" : ` ${balance.unit}`}`;
 }
 /** Percent used, only when the gateway reports a real limit. */
 export function balancePercent(balance: UsageBalance): number | null {
