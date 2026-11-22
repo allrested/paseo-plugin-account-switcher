@@ -43,7 +43,7 @@ Each provider has a **system** account that references its existing CLI home and
 
 Shared directories use links; selected configuration files are copied or merged when preparing a profile. Unchanged contents are not rewritten. Claude's profile-local project trust and history metadata are preserved while ordinary shared configuration is merged.
 
-Managed environments remove authentication overrides and select the intended home. Conflicting API-key, provider, or endpoint settings are rejected. Missing or redirected managed homes fail rather than falling back to another account.
+Managed environments remove authentication overrides and select the intended home. Conflicting API-key, provider, or endpoint settings in the daemon's or the provider's environment, on a command line, or in a linked profile are rejected. The host's own `settings.json` is the exception: when it points the host CLI at a gateway, the host account is treated as a gateway (see the README), and a profile prepared from those settings gets them without `apiKeyHelper` and the authentication keys of `env`. Missing or redirected managed homes fail rather than falling back to another account.
 
 ## Integration and switching
 

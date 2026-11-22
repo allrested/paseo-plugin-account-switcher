@@ -23,6 +23,16 @@ export function assertSubscriptionEnvironment(provider: Provider, environment: R
   if (conflicting) throw new Error(`${provider === "claude" ? "Claude" : "Codex"} authentication overrides in environment variables are incompatible with subscription accounts. Remove them from the provider settings and daemon environment.`);
 }
 const AUTH_CONFIG_KEYS = /(^|\.)(model_provider|model_providers|chatgpt_base_url|forced_login_method|forced_chatgpt_workspace_id|cli_auth_credentials_store|sqlite_home|codex_home)(\.|$)/;
+/**
+ * The host's settings without what makes its CLI talk to a gateway or use a key: `apiKeyHelper` and the authentication
+ * keys of `env`. A profile prepared for another account must not inherit them.
+ */
+export function stripAuthSettings(settings: Record<string, unknown>): Record<string, unknown> {
+  const { apiKeyHelper: _helper, env, ...rest } = settings;
+  if (!env || typeof env !== "object" || Array.isArray(env)) return env === undefined ? rest : { ...rest, env };
+  const kept = Object.fromEntries(Object.entries(env).filter(([key]) => ![...AUTH_ENV, "CLAUDE_CONFIG_DIR", "CODEX_HOME"].includes(key)));
+  return Object.keys(kept).length ? { ...rest, env: kept } : rest;
+}
 export function assertClaudeSettings(settings: Record<string, unknown>) {
   if (settings.apiKeyHelper || Object.keys(settings.env ?? {}).some(key => [...AUTH_ENV,"CLAUDE_CONFIG_DIR","CODEX_HOME"].includes(key))) throw new Error("Claude settings contain authentication overrides.");
 }
@@ -103,8 +113,8 @@ export async function prepareProfile({ provider, home, sourceHome, sourceEnviron
     for (const name of ["skills", "commands", "agents", "plugins", "rules", "CLAUDE.md"]) await linkDirectory(home, sourceHome, name, false);
     const text = await readOptional(join(sourceHome, "settings.json"));
     if (text !== null) {
-      const settings = JSON.parse(text);
-      assertClaudeSettings(settings);
+      // A host set up for a gateway keeps that in these settings. Another account gets them without it.
+      const settings = stripAuthSettings(JSON.parse(text));
       await writeChanged(join(home, "settings.json"), JSON.stringify(settings, null, 2));
     } else await rm(join(home,"settings.json"),{force:true});
     // Claude keeps account metadata in this file too. Copy only user settings,

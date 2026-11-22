@@ -2,7 +2,7 @@ import { useRpc } from "@getpaseo/plugin/client";
 import { SettingsCard, SettingsSelect, SettingsSwitch } from "@getpaseo/plugin/client/ui";
 import { useState } from "react";
 import { Text, View } from "react-native";
-import { addGateway, importGatewayProvider, listGatewayProviders, listProfiles, linkProfile, moveCandidates, moveIdleAgent, setHeadroom, type AccountState, type GatewayProvider } from "../shared/contracts";
+import { isGateway, addGateway, importGatewayProvider, listGatewayProviders, listProfiles, linkProfile, moveCandidates, moveIdleAgent, setHeadroom, type AccountState, type GatewayProvider } from "../shared/contracts";
 import type { AccountsProps } from "./accounts";
 import { Button, Field, muted, Notice, row } from "./components";
 import { useAction } from "./data";
@@ -21,7 +21,7 @@ export function ClaudeTools({ theme, state, host, onChanged }: AccountsProps & {
   const [from, setFrom] = useState("system-claude"), [to, setTo] = useState("");
   const [results, setResults] = useState<string[]>([]);
   const action = useAction(host.id, onChanged), busy = action.isPending;
-  const subscriptions = state.accounts.filter(a => a.provider === "claude" && a.source !== "gateway");
+  const subscriptions = state.accounts.filter(a => a.provider === "claude" && !isGateway(a));
   const options = subscriptions.map(a => ({ value: a.id, label: a.label }));
   const destinations = options.filter(option => option.value !== from && subscriptions.some(a => a.id === option.value && a.authStatus === "ready"));
   const destination = destinations.find(option => option.value === to)?.value ?? destinations[0]?.value;

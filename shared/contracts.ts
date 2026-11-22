@@ -63,6 +63,10 @@ export const AccountSchema = z.object({
   login: z.union([z.object({sessionId:z.string(),mode:LoginModeSchema}),z.object({workspaceId:z.string(),terminalId:z.string()})]).nullable().optional(),
 });
 export type Account = z.infer<typeof AccountSchema>;
+/** The host's own Claude account when its settings point at a gateway instead of a Claude sign-in. */
+export const isHostGateway = (account: Pick<Account, "source" | "baseUrl">): boolean => account.source === "system" && Boolean(account.baseUrl);
+/** An added gateway or a host gateway. Neither has a sign-in to check or subscription limits to read. */
+export const isGateway = (account: Pick<Account, "source" | "baseUrl">): boolean => account.source === "gateway" || isHostGateway(account);
 export const BindingSchema = z.object({
   agentId: z.string(), provider: ProviderSchema,
   currentAccountId: z.string().nullable(), pendingAccountId: z.string().nullable(),

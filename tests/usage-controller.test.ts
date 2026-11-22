@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AccountController } from "../server/controller";
@@ -72,6 +72,30 @@ describe("gateways with a usage reader",()=>{
       expect(boundary.probe).not.toHaveBeenCalled();
       boundary.fetch.mockResolvedValue({identityKey:null,plan:null,windows:[],balances:[{id:"balance",label:"Credits",used:null,remaining:412,limit:null,unit:"credits",detail:null}]});
       expect((await controller.usage.refresh(read.id)).find(s=>s.accountId===read.id)).toMatchObject({status:"ok",balances:[{remaining:412}]});
+    } finally {await controller.close();}
+  });
+});
+
+describe("a host whose Claude settings point at a gateway",()=>{
+  it("is ready without a sign-in probe, can be the default, and joins the scheduler only with a usage reader",async()=>{
+    const root=await mkdtemp(join(tmpdir(),"quota-host-gateway-"));roots.push(root);
+    const claude=join(root,"host-claude");
+    await mkdir(claude,{recursive:true});
+    await writeFile(join(claude,"settings.json"),JSON.stringify({env:{ANTHROPIC_BASE_URL:"https://proxy.example",ANTHROPIC_AUTH_TOKEN:"fixture-token"}}));
+    const controller=new AccountController(root);await controller.ready;
+    try {
+      await controller.store.change(state=>{state.sourceHomes.claude=claude;state.accounts.find(a=>a.id==="system-claude")!.home=claude;state.available.claude=true;state.commands.claude=[process.execPath];});
+      boundary.probe.mockClear();
+      expect(await controller.checkAccount("system-claude")).toMatchObject({authStatus:"ready",baseUrl:"https://proxy.example"});
+      await controller.setDefault("claude","system-claude");
+      expect((await controller.store.read()).defaults.claude).toBe("system-claude");
+      expect(boundary.probe).not.toHaveBeenCalled();
+      expect((await controller.quotaAccounts({verifyAccountId:"system-claude"})).map(a=>a.id)).not.toContain("system-claude");
+      await setGatewayUsage(controller.store,"system-claude",{kind:"endpoint",path:"/usage",fields:{remaining:"left"},unit:"credits",divisor:1,label:"Credits"});
+      const quota=(await controller.quotaAccounts()).find(a=>a.id==="system-claude")!;
+      expect(quota).toMatchObject({identityKey:"gateway:system-claude",command:[]});
+      expect(await quota.gateway!.credentials()).toEqual({baseUrl:"https://proxy.example",token:"fixture-token"});
+      expect(boundary.probe).not.toHaveBeenCalled();
     } finally {await controller.close();}
   });
 });

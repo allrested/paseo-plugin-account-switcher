@@ -228,6 +228,18 @@ describe("a new agent's account when the default would fail",()=>{
   return {store,target,spare};
  }
  const launched=async(store:AccountStore,agentId:string)=>(await store.read()).bindings.find(b=>b.agentId===agentId)?.launchAccountId;
+ it("keeps a new agent on a default that is the host's gateway, whatever its reading says, and never picks it as a spare",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"switch-host-gateway-"));roots.push(root);
+  const store=new AccountStore(root);await store.initialize({claude:join(root,"claude"),codex:join(root,"codex")});
+  const sub=await store.add("claude","Subscription");
+  await store.change(r=>{r.integration.enabled=true;r.integration.providers=["claude"];for(const a of r.accounts)a.authStatus="ready";r.accounts.find(a=>a.id==="system-claude")!.baseUrl="https://proxy.example";r.defaults.claude="system-claude";});
+  const reading=(accountId:string,usedPercent:number)=>({...snapshot(accountId,usedPercent),provider:"claude" as const});
+  const service=makeService(store,{usage:async()=>[reading("system-claude",100),reading(sub.id,10)]});
+  await expect(service.bindNewAgent("on-gateway","claude")).resolves.toMatchObject({accountId:"system-claude",reason:null});
+  await store.change(r=>{r.defaults.claude=sub.id;});
+  const full=makeService(store,{usage:async()=>[reading("system-claude",0),reading(sub.id,100)]});
+  await expect(full.bindNewAgent("sub-full","claude")).resolves.toMatchObject({accountId:sub.id});
+ });
  it("starts on the account with the most room when the default's limit is used up",async()=>{
   const {store,target,spare}=await pool();
   const service=makeService(store,{usage:async()=>[snapshot(target.id,100),snapshot("system-codex",70),snapshot(spare.id,20)]});

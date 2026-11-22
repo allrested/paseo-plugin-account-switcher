@@ -27,11 +27,13 @@ it("keeps account credentials separate while both Codex profiles resume the same
   expect(envA.OPENAI_API_KEY).toBeUndefined(); expect(envA.PATH).toBe("/usr/bin");
 });
 
-it("refuses shared settings and CLI overrides that could select another identity",async()=>{
+it("strips identity-selecting keys from shared settings and refuses CLI overrides that could select another identity",async()=>{
  const root=await mkdtemp(join(tmpdir(),"profile-auth-"));roots.push(root);
  const source=join(root,"source"),home=join(root,"account");await mkdir(source);
- await writeFile(join(source,"settings.json"),JSON.stringify({env:{CLAUDE_CONFIG_DIR:"/another/account"}}));
- await expect(prepareProfile({provider:"claude",home,sourceHome:source})).rejects.toThrow(/authentication/);
+ // The host's own settings may select another identity or a gateway; a prepared profile gets them without those keys.
+ await writeFile(join(source,"settings.json"),JSON.stringify({theme:"dark",env:{CLAUDE_CONFIG_DIR:"/another/account",KEEP:"1"}}));
+ await prepareProfile({provider:"claude",home,sourceHome:source});
+ expect(JSON.parse(await readFile(join(home,"settings.json"),"utf8"))).toEqual({theme:"dark",env:{KEEP:"1"}});
  await expect(assertManagedCommand("claude",["--settings",JSON.stringify({env:{ANTHROPIC_CUSTOM_HEADERS:"Authorization: foreign"}})])).rejects.toThrow(/authentication/);
  await expect(assertManagedCommand("codex",["-c","profiles.work.cli_auth_credentials_store=\"keyring\""])).rejects.toThrow(/isolation/);
  await expect(assertManagedCommand("codex",["-c","model_reasoning_effort=\"high\""])).resolves.toBeUndefined();

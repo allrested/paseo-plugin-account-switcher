@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, readdir, realpath, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { AccountSchema, GatewayInput, GatewayUsageSchema, type GatewayUsage } from "../shared/contracts";
+import { AccountSchema, GatewayInput, GatewayUsageSchema, isGateway, isHostGateway, type GatewayUsage } from "../shared/contracts";
 import { GatewayUsageError, readGatewayUsage, type GatewayDependencies } from "./usage/gateway";
 import { DashboardMissingError, type DashboardReading } from "./usage/dashboard";
 import { atomicWrite, isMissing } from "./files";
@@ -127,8 +127,48 @@ export async function gatewayArguments(root: string, original: string[], endpoin
 
 function gatewayFrom(state: { accounts: StoredAccount[] }, accountId: string): StoredAccount {
   const account = state.accounts.find(a => a.id === accountId);
-  if (!account || account.source !== "gateway" || account.provider !== "claude") throw new Error("Choose a Claude gateway.");
+  if (!account || !isGateway(account) || account.provider !== "claude") throw new Error("Choose a Claude gateway.");
   return account;
+}
+
+/**
+ * The gateway the host's own Claude CLI is set up for: a base URL in the `env` of its settings.json, with a token, a key
+ * or a key helper beside it. The token is returned for a usage request only; it is never stored by this plugin.
+ */
+async function readHostGateway(state: Pick<Registry, "sourceHomes">): Promise<{ baseUrl: string; token: string | null } | null> {
+  let settings: unknown;
+  try { settings = JSON.parse(await readFile(join(state.sourceHomes.claude, "settings.json"), "utf8")); } catch { return null; }
+  if (!settings || typeof settings !== "object") return null;
+  const { env, apiKeyHelper } = settings as { env?: Record<string, unknown>; apiKeyHelper?: unknown };
+  const address = env?.ANTHROPIC_BASE_URL, token = env?.ANTHROPIC_AUTH_TOKEN;
+  if (typeof address !== "string" || !(typeof token === "string" && token || typeof env?.ANTHROPIC_API_KEY === "string" && env.ANTHROPIC_API_KEY || apiKeyHelper)) return null;
+  try {
+    const url = new URL(address);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    // Shown and stored without credentials or a query, which an address may carry.
+    return { baseUrl: (url.origin + url.pathname).replace(/\/+$/, ""), token: typeof token === "string" && /^[!-~]+$/.test(token) ? token : null };
+  } catch { return null; }
+}
+/** Keeps the host Claude account in step with its settings: a gateway there makes it ready with an address, no gateway takes both away. */
+export async function reconcileHostGateway(store: AccountStore): Promise<void> {
+  const state = await store.read();
+  const account = state.accounts.find(a => a.source === "system" && a.provider === "claude");
+  if (!account) return;
+  const found = await readHostGateway(state);
+  if (found ? account.baseUrl === found.baseUrl && account.authStatus === "ready" : !account.baseUrl) return;
+  await store.change(current => {
+    const target = current.accounts.find(a => a.id === account.id);
+    if (!target) return;
+    if (found) Object.assign(target, { baseUrl: found.baseUrl, authStatus: "ready", email: null, plan: null, identityKey: null });
+    else { delete target.baseUrl; target.authStatus = "unknown"; }
+  });
+}
+/** What a usage endpoint is asked with: an added gateway's stored token, or the host gateway's token from its settings. */
+export async function gatewayCredentials(store: AccountStore, account: StoredAccount): Promise<{ baseUrl: string; token: string }> {
+  if (account.source === "gateway") { const env = await gatewayEnvironment(store.root, account); return { baseUrl: env.ANTHROPIC_BASE_URL, token: env.ANTHROPIC_AUTH_TOKEN }; }
+  const found = isHostGateway(account) ? await readHostGateway(await store.read()) : null;
+  if (!found?.token || found.baseUrl !== account.baseUrl) throw new Error("The saved gateway credentials are unavailable.");
+  return { baseUrl: found.baseUrl, token: found.token };
 }
 /** Saves how a gateway's usage is read; `null` turns the reading off. The setting holds no secret. */
 export async function setGatewayUsage(store: AccountStore, accountId: string, usage: GatewayUsage | null) {
@@ -144,7 +184,7 @@ export async function testGatewayUsage(store: AccountStore, accountId: string, u
   const account = gatewayFrom(await store.read(), accountId);
   try {
     // A test is the user asking now: it is not held back by the once-a-minute spacing of dashboard reads.
-    const reading: DashboardReading = await readGatewayUsage(parsed, async () => { const env = await gatewayEnvironment(store.root, account); return { baseUrl: env.ANTHROPIC_BASE_URL, token: env.ANTHROPIC_AUTH_TOKEN }; }, { ...deps, accountId: `test:${accountId}`, force: true });
+    const reading: DashboardReading = await readGatewayUsage(parsed, () => gatewayCredentials(store, account), { ...deps, accountId: `test:${accountId}`, force: true });
     return { ok: true, plan: reading.plan, windows: reading.windows, balances: reading.balances, error: null, ...(reading.lines ? { lines: reading.lines } : {}) };
   } catch (error) {
     const partial = error instanceof DashboardMissingError ? error.partial : null;

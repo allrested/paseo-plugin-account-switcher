@@ -2,7 +2,7 @@ import { useAgent, usePaseo, useRpc, type PluginHostProps } from "@getpaseo/plug
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo } from "react";
 import { Pressable, Text, View } from "react-native";
-import { applySwitch, cliName, missingCli, prepareSwitch, refreshUsage } from "../shared/contracts";
+import { applySwitch, cliName, isGateway, missingCli, prepareSwitch, refreshUsage } from "../shared/contracts";
 import { body, Button, heading, InlineAction, muted, Notice, QuotaSummary, row, StatusDot, tabular } from "./components";
 import { useAccountsData, useAction, useNow } from "./data";
 import { currentAccount, currentAccountName, errorMessage, agentModel, idleForSwitch, providerName, supportedProvider, switchRisk, usageSummary } from "./format";
@@ -70,7 +70,7 @@ export function AgentSwitcher({ theme, host, agentId, onChanged, openAccounts, c
     </View> : null}
     {unconfirmed
       ? <Notice theme={theme} tone="warning">Account not confirmed. Choose an account below and apply it when the agent is idle.</Notice>
-      : provider && (current?.source !== "gateway" || current.usage) ? <QuotaSummary theme={theme} snapshot={snapshot} now={now} compact
+      : provider && (!current || !isGateway(current) || current.usage) ? <QuotaSummary theme={theme} snapshot={snapshot} now={now} compact
         onRefresh={current ? () => action.run(() => refresh({ accountId: current.id })) : undefined} refreshing={action.isPending} /> : null}
     {candidates.length ? <View style={{ gap: 6 }}>
       <Text style={{ ...muted(theme), fontWeight: "600" }}>Switch to</Text>
@@ -80,7 +80,7 @@ export function AgentSwitcher({ theme, host, agentId, onChanged, openAccounts, c
         const available = accountAvailable(account);
         const blocked = disabled || actual || !available;
         // A gateway with a usage reader is described like a subscription, by what is left; without one, by its address.
-        const detail = account.source === "gateway" ? (account.usage ? usageSummary(usage.data?.accounts.find((item) => item.accountId === account.id), now) : `Gateway · ${account.baseUrl}`) : account.login ? "sign-in in progress · finish in Accounts"
+        const detail = isGateway(account) ? (account.usage ? usageSummary(usage.data?.accounts.find((item) => item.accountId === account.id), now) : `Gateway · ${account.baseUrl}`) : account.login ? "sign-in in progress · finish in Accounts"
           : account.authStatus === "error" ? "cannot access sign-in · check credentials in Accounts"
           : account.authStatus === "unknown" ? "sign-in not confirmed · check in Accounts"
           : !available ? "sign-in required · check in Accounts"
@@ -104,7 +104,7 @@ export function AgentSwitcher({ theme, host, agentId, onChanged, openAccounts, c
       })}
     </View> : null}
     {pending ? <View style={{ gap: 8 }}>
-      {pending.source === "gateway" ? <Notice theme={theme}>Applying sends this conversation to {pending.baseUrl} on the next turn.</Notice> : null}
+      {isGateway(pending) ? <Notice theme={theme}>Applying sends this conversation to {pending.baseUrl} on the next turn.</Notice> : null}
       {risk ? <Notice theme={theme} tone="warning">{risk}</Notice> : null}
       <View style={row}>
         <Button theme={theme} variant="primary" disabled={disabled || !idle || !accountAvailable(pending)} onPress={() => action.run(async () => {

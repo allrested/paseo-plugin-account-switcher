@@ -5,9 +5,9 @@ import { join, dirname, resolve } from "node:path";
 import { lstat, readFile, realpath, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import type { PaseoApi } from "./paseo-api";
-import { AccountSchema, missingCli, type LoginSession, type Provider } from "../shared/contracts";
+import { AccountSchema, missingCli, type LoginSession, type Provider, isGateway, isHostGateway } from "../shared/contracts";
 import { AccountStore, accountFrom, boundAccount, type Registry, type StoredAccount, type StoredBinding } from "./store";
-import { gatewayEnvironment, linkedCredentialHome, validateLinkedProfile } from "./claude-profiles";
+import { gatewayCredentials, gatewayEnvironment, linkedCredentialHome, reconcileHostGateway, validateLinkedProfile } from "./claude-profiles";
 import { prepareProfile } from "./profiles";
 import { accountCommand, accountEnvironment, launchLogin, probeAccount, removeAccountCredentials } from "./auth";
 import { installIntegration, restoreIntegration, writeLaunchers, prepareRuntime, reconcileIntegration } from "./integration";
@@ -71,6 +71,7 @@ export class AccountController {
   await this.ensureRuntime(paseo);
   await this.reconcileDeletedAgents(paseo);
   await this.reconcileLogins();
+  await reconcileHostGateway(this.store);
   const state=await this.store.read();
   for(const binding of state.bindings)await this.confirmLaunch(paseo,state,binding,STARTED);
   return this.store.snapshot();
@@ -164,7 +165,10 @@ export class AccountController {
   const existing=this.checks.get(id);
   if(existing){if(!verifyCredentials)return existing;await existing.catch(()=>{});return this.checkAccount(id,true);}
   const task=(async()=>{
+   // A host set up for a gateway has no sign-in to probe: its settings are the whole answer.
+   if(id==="system-claude")await reconcileHostGateway(this.store);
    const state=await this.store.read(), account=accountFrom(state,id);
+   if(isHostGateway(account))return account;
    if(!state.available[account.provider])throw new Error(missingCli(account.provider));
    if(account.loginToken)throw new Error("Finish signing in, then click “Check sign-in”.");
    if(account.source==="gateway"){await gatewayEnvironment(this.store.root,account);return account;}
@@ -205,10 +209,10 @@ export class AccountController {
   await this.reconcileLogins();
   const initial=await this.store.read();
   const target=initial.accounts.find(account=>account.id===input.verifyAccountId);
-  if(target&&target.source!=="gateway"&&initial.available[target.provider]&&initial.commands[target.provider]&&!target.loginToken)await this.checkAccount(target.id,true).catch(()=>{this.credentialProofs.delete(target.id);});
+  if(target&&!isGateway(target)&&initial.available[target.provider]&&initial.commands[target.provider]&&!target.loginToken)await this.checkAccount(target.id,true).catch(()=>{this.credentialProofs.delete(target.id);});
   const state=await this.store.read();
   // A gateway joins only with a usage reader. The reader needs neither the Claude CLI nor a sign-in.
-  const accounts = state.accounts.filter(a => a.source === "gateway" ? Boolean(a.usage) : state.available[a.provider] && state.commands[a.provider] && !a.loginToken);
+  const accounts = state.accounts.filter(a => isGateway(a) ? Boolean(a.usage) : state.available[a.provider] && state.commands[a.provider] && !a.loginToken);
   const allowed = await Promise.all(accounts.map(async account => {
     if (account.source === "linked") {
       try { await validateLinkedProfile(linkedCredentialHome(account)); } catch { return []; }
@@ -218,10 +222,10 @@ export class AccountController {
   return allowed.flat();
  }
  private toQuotaAccount(account:StoredAccount,state:Registry):QuotaAccount {
-   if(account.source==="gateway"&&account.usage){
-     const root=this.store.root;
+   if(isGateway(account)&&account.usage){
+     const store=this.store;
      return {id:account.id,provider:account.provider,home:account.home,command:[],env:{},identityKey:`gateway:${account.id}`,generation:account.generation,
-       gateway:{usage:account.usage,credentials:async()=>{const env=await gatewayEnvironment(root,account);return{baseUrl:env.ANTHROPIC_BASE_URL,token:env.ANTHROPIC_AUTH_TOKEN};}}};
+       gateway:{usage:account.usage,credentials:()=>gatewayCredentials(store,account)}};
    }
    const env=accountEnvironment(account,state);
    const credentialHome=account.provider==="claude"?(env.CLAUDE_SECURESTORAGE_CONFIG_DIR??env.CLAUDE_CONFIG_DIR)||join(env.HOME||homedir(),".claude"):account.home;

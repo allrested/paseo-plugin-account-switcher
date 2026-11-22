@@ -1,7 +1,7 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { hashAccountKey, windowFromReportedDuration, type UsageAccount, type UsageDetail, type UsageReport, type UsageScope, type UsageWindow as PaseoWindow } from "@getpaseo/plugin/server/usage";
 import { z } from "zod";
-import { cliName, type Provider, type UsageSnapshot, type UsageWindow } from "../shared/contracts";
+import { cliName, isGateway, type Provider, type UsageSnapshot, type UsageWindow } from "../shared/contracts";
 import type { Registry } from "./store";
 
 // Paseo's Usage view lists every source's accounts side by side. This source adds the managed accounts, from the limits the plugin already collects.
@@ -37,7 +37,7 @@ export function discoverAccounts(registry: Pick<Registry, "accounts">, scope: Us
   const found = new Map<string, UsageAccount>();
   for (const account of registry.accounts) {
     // A gateway has no login to compare. It is listed once it has a usage reader, under a hash of its own id.
-    if (account.source === "gateway") {
+    if (isGateway(account)) {
       if (account.usage) found.set(`gateway:${account.id}`, { key: hashAccountKey(`gateway:${account.id}`), label: account.label, harness: cliName[account.provider], input: { accountId: account.id } });
       continue;
     }
