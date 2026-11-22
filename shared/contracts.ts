@@ -13,9 +13,33 @@ export const LoginSessionSchema = z.object({
   canSubmitCode: z.boolean(), error: z.string().nullable(), expiresAt: z.string().nullable(),
 });
 export type LoginSession = z.infer<typeof LoginSessionSchema>;
+export const UsageUnitSchema = z.enum(["credits", "usd", "requests", "tokens"]);
+export type UsageUnit = z.infer<typeof UsageUnitSchema>;
+// A dot path into a JSON reply, such as `data.total_used`; a numeric segment indexes an array.
+const FieldPath = z.string().max(200).regex(/^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$/, "Use names separated by dots, such as data.total_used.");
+const UsageFields = z.object({
+  used: FieldPath.optional(), limit: FieldPath.optional(), remaining: FieldPath.optional(), usedPercent: FieldPath.optional(),
+  resetsAt: FieldPath.optional(), plan: FieldPath.optional(), unlimited: FieldPath.optional(),
+}).refine(f => Boolean(f.used || f.limit || f.remaining || f.usedPercent), "Name the field for used, limit, remaining or percent.");
+/** How a gateway's usage is read. `endpoint` asks the gateway's own origin with its token; `file` reads what another tool wrote. */
+export const GatewayUsageSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("endpoint"),
+    path: z.string().max(512).regex(/^\/(?!\/)[^\s\\#]*$/, "Use a path on the gateway, starting with /."),
+    fields: UsageFields, unit: UsageUnitSchema, divisor: z.number().positive().finite().default(1),
+    label: z.string().trim().min(1).max(40).default("Balance"),
+  }),
+  z.object({ kind: z.literal("file"), path: z.string().max(1024).regex(/^\/[^\0]*$/, "Use an absolute path.") }),
+]);
+export type GatewayUsage = z.infer<typeof GatewayUsageSchema>;
+export const BDDEV_HOST = "api.bddevlab.online";
+export const BDDEV_USAGE: GatewayUsage = {
+  kind: "endpoint", path: "/api/usage/token/", unit: "credits", divisor: 100000, label: "Credits",
+  fields: { used: "data.total_used", limit: "data.total_granted", remaining: "data.total_available", plan: "data.name", unlimited: "data.unlimited_quota" },
+};
 export const AccountSchema = z.object({
   id: z.string(), provider: ProviderSchema, label: z.string(),
-  source: z.enum(["managed", "system", "linked", "gateway"]), baseUrl: z.string().optional(), email: z.string().nullable(),
+  source: z.enum(["managed", "system", "linked", "gateway"]), baseUrl: z.string().optional(), usage: GatewayUsageSchema.optional(), email: z.string().nullable(),
   plan: z.string().nullable(), authStatus: z.enum(["ready", "needs_auth", "unknown", "error"]),
   createdAt: z.string(),
   login: z.union([z.object({sessionId:z.string(),mode:LoginModeSchema}),z.object({workspaceId:z.string(),terminalId:z.string()})]).nullable().optional(),
@@ -49,10 +73,18 @@ export const UsageWindowSchema = z.object({
   scope: z.enum(["account", "model", "spend"]).optional(),
 });
 export type UsageWindow = z.infer<typeof UsageWindowSchema>;
+// An amount instead of a percentage: credits, money, requests or tokens used and left.
+export const UsageBalanceSchema = z.object({
+  id: z.string(), label: z.string(), used: z.number().nullable(), remaining: z.number().nullable(), limit: z.number().nullable(),
+  unit: UsageUnitSchema, detail: z.string().nullable().optional(),
+});
+export type UsageBalance = z.infer<typeof UsageBalanceSchema>;
 export const UsageSnapshotSchema = z.object({
   accountId: z.string(), provider: ProviderSchema,
   status: z.enum(["ok", "stale", "needs_auth", "unavailable"]),
   plan: z.string().nullable(), windows: z.array(UsageWindowSchema),
+  // Amounts a gateway reports. Absent on subscriptions and on snapshots saved before gateways had usage.
+  balances: z.array(UsageBalanceSchema).optional(),
   // Model IDs the account's plan offers; null or absent when the provider does not list them.
   models: z.array(z.string()).nullable().optional(),
   // The provider's own verdict that ordinary usage is allowed (Codex `ordinaryUsageAllowed`); null when not reported.
