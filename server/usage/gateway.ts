@@ -1,16 +1,16 @@
 import { lstat, readFile } from "node:fs/promises";
 import type { GatewayUsage, UsageBalance, UsageUnit, UsageWindow } from "../../shared/contracts";
 import { retryAfter } from "./claude";
+import { readDashboardUsage, type DashboardDependencies } from "./dashboard";
 
-export type GatewayReading = { plan: string | null; windows: UsageWindow[]; balances: UsageBalance[]; fetchedAt?: string };
-/** A reason the user can read. It never carries the token or any text from a reply, a page or a file. */
-export class GatewayUsageError extends Error {
-  constructor(message: string, readonly retryAfterMs?: number, readonly stale = false) { super(message); this.name = "GatewayUsageError"; }
-}
+import { GatewayUsageError, type GatewayReading } from "./gateway-reading";
+export { GatewayUsageError, type GatewayReading };
 type Endpoint = Extract<GatewayUsage, { kind: "endpoint" }>;
 type FileUsage = Extract<GatewayUsage, { kind: "file" }>;
 export type GatewayCredentials = { baseUrl: string; token: string };
-export type GatewayDependencies = { fetch?: typeof fetch; signal?: AbortSignal; now?: () => number };
+export type GatewayDependencies = { fetch?: typeof fetch; signal?: AbortSignal; now?: () => number;
+  /** For a dashboard: whose reading this is (reads are spaced per account), and the browser seams. */
+  accountId?: string; openTab?: DashboardDependencies["openTab"]; sleep?: DashboardDependencies["sleep"]; force?: boolean };
 
 const MAX_BYTES = 256 * 1024;
 const TIMEOUT_MS = 15_000;
@@ -149,6 +149,10 @@ export async function readFileUsage(usage: FileUsage, deps: Pick<GatewayDependen
 
 export async function readGatewayUsage(usage: GatewayUsage, gateway: () => Promise<GatewayCredentials>, deps: GatewayDependencies = {}): Promise<GatewayReading> {
   if (usage.kind === "file") return readFileUsage(usage, deps);
+  if (usage.kind === "dashboard") {
+    const now = deps.now;
+    return readDashboardUsage(deps.accountId ?? "", usage, { openTab: deps.openTab, sleep: deps.sleep, force: deps.force, ...(now ? { now: () => new Date(now()) } : {}) });
+  }
   let credentials: GatewayCredentials;
   try { credentials = await gateway(); } catch { throw new GatewayUsageError("The saved gateway credentials are unavailable."); }
   return readEndpointUsage(usage, credentials, deps);

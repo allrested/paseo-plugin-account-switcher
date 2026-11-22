@@ -19,7 +19,7 @@ const {GatewayUsageForm}=await import("../client/gateway-usage");
 const {formFromUsage,usageFromForm}=await import("../client/gateway-usage-form");
 const {Button,Field,Segmented}=await import("../client/components");
 
-type Node=ReactElement<{children?:unknown;label?:string;disabled?:boolean;onPress?():void;accessibilityLabel?:string;onChangeText?(text:string):void;value?:string;onChange?(value:string):void;options?:{value:string;label:string}[]}>;
+type Node=ReactElement<{onFocus?():void;children?:unknown;label?:string;disabled?:boolean;onPress?():void;accessibilityLabel?:string;onChangeText?(text:string):void;value?:string;onChange?(value:string):void;options?:{value:string;label:string}[]}>;
 function elements(node:unknown):Node[]{
   if(Array.isArray(node))return node.flatMap(elements);
   if(!node||typeof node!=="object"||!("props" in node))return [];
@@ -64,7 +64,7 @@ describe("usage form",()=>{
   it("offers the choices and starts on Off for a gateway without a reader",()=>{
     const {render}=mount();
     const kinds=choice(render(),"Usage");
-    expect(kinds.props.options!.map(o=>o.label)).toEqual(["Off","Usage endpoint","External reading"]);
+    expect(kinds.props.options!.map(o=>o.label)).toEqual(["Off","Usage endpoint","Usage dashboard","External reading"]);
     expect(kinds.props.value).toBe("off");
     expect(button(render(),"Test")).toBeUndefined();
   });
@@ -111,3 +111,67 @@ describe("usage form",()=>{
     expect(fixture.rpc).toHaveBeenLastCalledWith("claude.gateway-usage-set",{accountId:"gw",usage:{kind:"file",path:"/data/usage/report.json"}});
   });
 });
+
+describe("usage dashboard form",()=>{
+  const saved={kind:"dashboard" as const,browser:{host:"browser.example",port:9223},pages:["https://gw.example/dashboard","https://gw.example/dashboard/users"],accountTile:"viewer@example.com",
+    between:[{after:"team-a",before:"team-b"},{}],
+    readings:[{label:"Weekly",find:"Weekly · all models",type:"percent" as const},{label:"Cost",find:"EST. COST",type:"amount" as const,unit:"usd" as const,page:1}]};
+  it("round-trips a saved dashboard setting",()=>{
+    expect(usageFromForm(formFromUsage(saved),"https://gw.example")).toEqual({ok:true,usage:saved});
+    const simple={kind:"dashboard" as const,browser:{host:"127.0.0.1",port:9222},pages:["https://gw.example/dashboard"],readings:[{label:"Cost",find:"EST. COST",type:"amount" as const,unit:"credits" as const}]};
+    expect(usageFromForm(formFromUsage(simple),"https://gw.example")).toEqual({ok:true,usage:simple});
+  });
+  it("starts with the shared browser's address, the gateway's address as the page and one empty reading",()=>{
+    const {render}=mount();
+    choice(render(),"Usage").props.onChange!("dashboard");
+    expect(field(render(),"Browser host").props.value).toBe("127.0.0.1");
+    expect(field(render(),"Browser port").props.value).toBe("9222");
+    expect(field(render(),"Page 1 address").props.value).toBe("https://gw.example/");
+    expect(field(render(),"Reading 1 caption").props.value).toBe("");
+    expect(button(render(),"Save").props.disabled).toBe(true);
+  });
+  it("adds and removes pages and readings, and saves what it shows",async()=>{
+    const {render}=mount();
+    choice(render(),"Usage").props.onChange!("dashboard");
+    field(render(),"Page 1 address").props.onChangeText!("https://gw.example/dashboard");
+    button(render(),"Add page").props.onPress!();
+    field(render(),"Page 2 address").props.onChangeText!("https://gw.example/dashboard/users");
+    field(render(),"Reading 1 caption").props.onChangeText!("Weekly · all models");
+    field(render(),"Reading 1 name").props.onChangeText!("Weekly");
+    button(render(),"Add reading").props.onPress!();
+    field(render(),"Reading 2 caption").props.onChangeText!("EST. COST");
+    field(render(),"Reading 2 name").props.onChangeText!("Cost");
+    choice(render(),"Reading 2 kind").props.onChange!("amount");
+    choice(render(),"Reading 2 unit").props.onChange!("usd");
+    choice(render(),"Reading 2 page").props.onChange!("1");
+    button(render(),"Add reading").props.onPress!();
+    expect(field(render(),"Reading 3 caption")).toBeDefined();
+    elements(render()).find(e=>e.type===Button&&e.props.label==="Remove reading 3")!.props.onPress!();
+    expect(field(render(),"Reading 3 caption")).toBeUndefined();
+    button(render(),"Save").props.onPress!();
+    await Promise.all(fixture.runs);
+    expect(fixture.rpc).toHaveBeenLastCalledWith("claude.gateway-usage-set",{accountId:"gw",usage:{kind:"dashboard",browser:{host:"127.0.0.1",port:9222},
+      pages:["https://gw.example/dashboard","https://gw.example/dashboard/users"],
+      readings:[{label:"Weekly",find:"Weekly · all models",type:"percent"},{label:"Cost",find:"EST. COST",type:"amount",unit:"usd",page:1}]}});
+  });
+  it("shows the page text after a test and fills the reading being edited from a chosen line",async()=>{
+    const {render}=mount(gateway({usage:saved}));
+    fixture.rpc.mockResolvedValueOnce({ok:false,plan:null,windows:[{id:"weekly",label:"Weekly",usedPercent:99,windowDurationMins:null,resetsAt:null}],balances:[],error:"No line 'EST. COST' on the page.",lines:[["Account limits","Weekly · all models","99%"],["My usage","ESTIMATED COST","$38.20"]]});
+    button(render(),"Test").props.onPress!();
+    await Promise.all(fixture.runs);
+    expect(text(render())).toContain("No line 'EST. COST' on the page.");
+    expect(text(render())).toContain("Weekly: 99% used");
+    expect(text(render())).toContain("ESTIMATED COST");
+    field(render(),"Reading 2 caption").props.onFocus!();
+    elements(render()).find(e=>e.props.accessibilityLabel==="Use line: ESTIMATED COST")!.props.onPress!();
+    expect(field(render(),"Reading 2 caption").props.value).toBe("ESTIMATED COST");
+    expect(field(render(),"Reading 1 caption").props.value).toBe("Weekly · all models");
+  });
+  it("refuses values that do not fit",()=>{
+    const form=formFromUsage(saved);
+    expect(usageFromForm({...form,browserPort:"abc"},"https://gw.example").ok).toBe(false);
+    expect(usageFromForm({...form,pages:["http://gw.example/dashboard"]},"https://gw.example").ok).toBe(false);
+    expect(usageFromForm({...form,readings:[{label:"A",find:"",type:"percent",unit:"credits",page:0}]},"https://gw.example").ok).toBe(false);
+  });
+});
+

@@ -35,9 +35,10 @@ A gateway shows no usage until you tell Accounts how to read it. Open the gatewa
 
 - **Off.** Nothing is read. This is the default.
 - **Usage endpoint.** A JSON usage endpoint on the gateway's own address. Enter its path and where each value is in the reply (for example `data.total_used`), a unit and a divisor. The request carries the gateway's token and goes only to the gateway's own address; an endpoint on another host is refused. **Fill in for BDDev** enters the values for `api.bddevlab.online`.
+- **Usage dashboard.** For a gateway that shows usage only on a web page. Accounts opens the pages you list in the shared browser, which must already be signed in to the dashboard, and gathers the numbers from the page text. Each reading is a caption on the page (for example `EST. COST` or `Weekly · all models`) and the number that follows it; a caption that appears once per account gives one reading per account. Nothing is typed in the browser, and the gateway's token is not sent. If the browser lands on a sign-in page, the reader can click an account that is already signed in there; otherwise the reading asks you to sign in. A dashboard is read at most once a minute.
 - **External reading.** A file on the host that another tool keeps up to date. A reading older than 30 minutes shows as stale.
 
-**Test** shows what the reader finds before you **Save**. The card, the agent's account switcher and Paseo's Usage view then show the reading: amounts such as "412 of 1,000 credits left" and percent windows. A field that is missing or not a number makes the reading unavailable and names the field; it is never shown as 0. Usage is shown only: gateways stay out of headroom balancing, automatic failover and idle moves.
+**Test** shows what the reader finds before you **Save**. For a dashboard it also shows the page text, and pressing a line uses it as a reading's caption. The card, the agent's account switcher and Paseo's Usage view then show the reading: amounts such as "412 of 1,000 credits left" and percent windows. A field or caption that is missing, or a value that is not a number, makes the reading unavailable and names what was not found; it is never shown as 0. Usage is shown only: gateways stay out of headroom balancing, automatic failover and idle moves.
 
 The external file holds the time of the reading and a Paseo usage report:
 

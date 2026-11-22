@@ -1,0 +1,56 @@
+← Home
+Usage Dashboard
+Signed in as viewer@example.com
+Account limits
+
+Live rate-limit state for the accounts your team draws on.
+
+team-a
+
+2 accounts · peak 99%
+
+one@example.com
+
+1m ago
+
+Weekly · all models
+
+99%
+
+every model, rolling 7 days · resets in 1d 18h
+
+Weekly · Fable
+
+0%
+
+Fable-class, rolling 7 days · resets in 1d 18h
+
+two@example.com
+
+just now
+
+Weekly · all models
+
+29%
+
+every model, rolling 7 days · resets in 3d 19h
+
+Weekly · Fable
+
+10%
+
+Fable-class, rolling 7 days · resets in 3d 19h
+
+team-b
+
+1 account · peak 50%
+
+three@example.com
+
+2m ago
+
+Weekly · all models
+
+50%
+
+every model, rolling 7 days · resets in 5d 2h

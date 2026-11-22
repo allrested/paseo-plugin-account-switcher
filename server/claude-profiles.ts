@@ -4,6 +4,7 @@ import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { AccountSchema, GatewayInput, GatewayUsageSchema, type GatewayUsage } from "../shared/contracts";
 import { GatewayUsageError, readGatewayUsage, type GatewayDependencies } from "./usage/gateway";
+import { DashboardMissingError, type DashboardReading } from "./usage/dashboard";
 import { atomicWrite, isMissing } from "./files";
 import { assertClaudeSettings, prepareProfile } from "./profiles";
 import { accountFrom, type AccountStore, type Registry, type StoredAccount } from "./store";
@@ -142,9 +143,11 @@ export async function testGatewayUsage(store: AccountStore, accountId: string, u
   const parsed = GatewayUsageSchema.parse(usage);
   const account = gatewayFrom(await store.read(), accountId);
   try {
-    const reading = await readGatewayUsage(parsed, async () => { const env = await gatewayEnvironment(store.root, account); return { baseUrl: env.ANTHROPIC_BASE_URL, token: env.ANTHROPIC_AUTH_TOKEN }; }, deps);
-    return { ok: true, plan: reading.plan, windows: reading.windows, balances: reading.balances, error: null };
+    // A test is the user asking now: it is not held back by the once-a-minute spacing of dashboard reads.
+    const reading: DashboardReading = await readGatewayUsage(parsed, async () => { const env = await gatewayEnvironment(store.root, account); return { baseUrl: env.ANTHROPIC_BASE_URL, token: env.ANTHROPIC_AUTH_TOKEN }; }, { ...deps, accountId: `test:${accountId}`, force: true });
+    return { ok: true, plan: reading.plan, windows: reading.windows, balances: reading.balances, error: null, ...(reading.lines ? { lines: reading.lines } : {}) };
   } catch (error) {
-    return { ok: false, plan: null, windows: [], balances: [], error: error instanceof GatewayUsageError ? error.message : "The gateway's usage could not be read." };
+    const partial = error instanceof DashboardMissingError ? error.partial : null;
+    return { ok: false, plan: null, windows: partial?.windows ?? [], balances: partial?.balances ?? [], error: error instanceof GatewayUsageError ? error.message : "The gateway's usage could not be read.", ...(partial?.lines ? { lines: partial.lines } : {}) };
   }
 }

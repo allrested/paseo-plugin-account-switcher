@@ -117,3 +117,10 @@ pass through `UsageError`'s optional message unchanged. A gateway failure is alw
 `unavailable`, never `needs_auth`: a 401 or 403 means the saved token is wrong, and
 there is no sign-in to offer. A `Retry-After` on a 429 sets the backoff. The reader's
 setting is part of the account's fingerprint, so changing it drops the old reading.
+
+A `dashboard` reader (`server/usage/dashboard/`) opens the listed pages in the shared
+browser over its debugging port, reads the visible text and applies caption rules
+(`rules.ts`). It never types and does not use the gateway's token. Reads are spaced
+at least a minute apart per account, whatever the scheduler asks; the form's Test is
+not held back.
+

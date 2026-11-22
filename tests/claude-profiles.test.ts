@@ -124,3 +124,16 @@ it("saves, clears and tests a gateway's usage reader without exposing the token"
     await expect(testGatewayUsage(store,"system-claude",BDDEV_USAGE)).rejects.toThrow("Choose a Claude gateway.");
   } finally {await new Promise(done=>http.close(done));}
 });
+it("tests a usage dashboard through the browser seam, returning the page text and whatever was found",async()=>{
+  const {store}=await fixture();
+  await store.change(s=>{s.available.claude=true;});
+  const gateway=await addGateway(store,{label:"Proxy",base_url:"https://gateway.example",api_token:"only-a-test-bearer"});
+  const page="Usage\n\nEST. COST\n\n$38.20\n";
+  const openTab=()=>async()=>({navigate:async()=>{},close:async()=>{},evaluate:async(expression:string)=>expression.includes("location.href")?JSON.stringify({href:"https://gateway.example/dashboard",ready:"complete"}):expression.includes("innerText")?page:undefined});
+  const usage={kind:"dashboard" as const,browser:{host:"browser.example",port:9222},pages:["https://gateway.example/dashboard"],readings:[{label:"Cost",find:"est. cost",type:"amount" as const,unit:"usd" as const}]};
+  const found=await testGatewayUsage(store,gateway.id,usage,{openTab,sleep:async()=>{}});
+  expect(found).toEqual({ok:true,plan:null,windows:[],balances:[{id:"cost",label:"Cost",used:38.2,remaining:null,limit:null,unit:"usd",detail:null}],error:null,lines:[["Usage","EST. COST","$38.20"]]});
+  const partial=await testGatewayUsage(store,gateway.id,{...usage,readings:[...usage.readings,{label:"Gone",find:"NOT THERE",type:"percent" as const}]},{openTab,sleep:async()=>{}});
+  expect(partial).toMatchObject({ok:false,error:"No line 'NOT THERE' on the page.",balances:[{used:38.2}],lines:[["Usage","EST. COST","$38.20"]]});
+  expect(JSON.stringify([found,partial])).not.toContain("only-a-test-bearer");
+});

@@ -21,7 +21,10 @@ const UsageFields = z.object({
   used: FieldPath.optional(), limit: FieldPath.optional(), remaining: FieldPath.optional(), usedPercent: FieldPath.optional(),
   resetsAt: FieldPath.optional(), plan: FieldPath.optional(), unlimited: FieldPath.optional(),
 }).refine(f => Boolean(f.used || f.limit || f.remaining || f.usedPercent), "Name the field for used, limit, remaining or percent.");
-/** How a gateway's usage is read. `endpoint` asks the gateway's own origin with its token; `file` reads what another tool wrote. */
+const DashboardPage = z.string().max(2048).refine(value => {
+  try { const url = new URL(value); return url.protocol === "https:" && !url.username && !url.password && !/[\s\\]/.test(value); } catch { return false; }
+}, "Use an https address without credentials.");
+/** How a gateway's usage is read. `endpoint` asks the gateway's own origin with its token; `file` reads what another tool wrote; `dashboard` reads a signed-in page through the shared browser. */
 export const GatewayUsageSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("endpoint"),
@@ -30,6 +33,21 @@ export const GatewayUsageSchema = z.discriminatedUnion("kind", [
     label: z.string().trim().min(1).max(40).default("Balance"),
   }),
   z.object({ kind: z.literal("file"), path: z.string().max(1024).regex(/^\/[^\0]*$/, "Use an absolute path.") }),
+  z.object({
+    kind: z.literal("dashboard"),
+    // The shared browser's remote-debugging address. The reader opens a tab there; it never types.
+    browser: z.object({
+      host: z.string().min(1).max(255).regex(/^[A-Za-z0-9.-]+$/, "Enter the browser's host name or IP address."),
+      port: z.number().int().min(1).max(65535),
+    }).default({ host: "127.0.0.1", port: 9222 }),
+    pages: z.array(DashboardPage).min(1).max(4),
+    accountTile: z.string().trim().min(1).max(200).optional(),
+    between: z.array(z.object({ after: z.string().trim().min(1).max(120).optional(), before: z.string().trim().min(1).max(120).optional() })).max(4).optional(),
+    readings: z.array(z.object({
+      label: z.string().trim().min(1).max(40), find: z.string().trim().min(1).max(120), type: z.enum(["percent", "amount"]),
+      unit: UsageUnitSchema.optional(), page: z.number().int().min(0).max(3).optional(),
+    }).refine(r => r.type !== "amount" || Boolean(r.unit), "Choose a unit for an amount.")).min(1).max(12),
+  }).refine(d => d.readings.every(r => (r.page ?? 0) < d.pages.length), "A reading names a page that is not listed."),
 ]);
 export type GatewayUsage = z.infer<typeof GatewayUsageSchema>;
 export const BDDEV_HOST = "api.bddevlab.online";
@@ -111,7 +129,7 @@ export const GatewayInput = z.object({
 export const addGateway = defineRpc({ name: "claude.gateway-add", input: GatewayInput, output: AccountSchema });
 export const rotateGateway = defineRpc({ name: "claude.gateway-rotate", input: AccountId.extend({ api_token: GatewayInput.shape.api_token }), output: Empty });
 export const setGatewayUsage = defineRpc({ name: "claude.gateway-usage-set", input: AccountId.extend({ usage: GatewayUsageSchema.nullable() }), output: Empty });
-export const GatewayUsageTestSchema = z.object({ ok: z.boolean(), plan: z.string().nullable(), windows: z.array(UsageWindowSchema), balances: z.array(UsageBalanceSchema), error: z.string().nullable() });
+export const GatewayUsageTestSchema = z.object({ ok: z.boolean(), plan: z.string().nullable(), windows: z.array(UsageWindowSchema), balances: z.array(UsageBalanceSchema), error: z.string().nullable() , lines: z.array(z.array(z.string())).optional() });
 export type GatewayUsageTest = z.infer<typeof GatewayUsageTestSchema>;
 export const testGatewayUsage = defineRpc({ name: "claude.gateway-usage-test", input: AccountId.extend({ usage: GatewayUsageSchema }), output: GatewayUsageTestSchema });
 export const listProfiles = defineRpc({ name: "claude.profiles", input: Empty, output: z.array(z.string()) });

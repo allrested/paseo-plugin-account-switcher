@@ -40,7 +40,7 @@ function fingerprint(account: QuotaAccount, includeCredentials=true): string {
 const identityProven = (account:QuotaAccount) => account.identityKey!==null&&!!account.credentialVersion?.startsWith("present:")&&account.credentialVersion===account.identityCredentialVersion;
 // A gateway's reason is already written for the user, and a gateway has no sign-in to ask for: every failure is `unavailable`.
 async function collectGatewayUsage(account: QuotaAccount, signal?: AbortSignal): Promise<CollectedUsage> {
-  try { return { identityKey: account.identityKey, ...await readGatewayUsage(account.gateway!.usage, account.gateway!.credentials, { signal }) }; }
+  try { return { identityKey: account.identityKey, ...await readGatewayUsage(account.gateway!.usage, account.gateway!.credentials, { signal, accountId: account.id }) }; }
   catch (error) { throw error instanceof GatewayUsageError ? new UsageError("unavailable", "gateway_usage", error.retryAfterMs, error.message) : new UsageError("unavailable", "gateway_usage", undefined, "The gateway's usage could not be read."); }
 }
 const fetchProvider: FetchUsage = (account, signal) => account.gateway ? collectGatewayUsage(account, signal) : account.provider === "codex" ? collectCodexUsage(account, signal) : collectClaudeUsage(account, {}, signal);
