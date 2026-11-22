@@ -368,3 +368,58 @@ describe("usage service", () => {
     } finally {await rm(directory,{recursive:true,force:true});}
   });
 });
+
+describe("gateway accounts in the scheduler", () => {
+  const usage = { kind: "endpoint" as const, path: "/usage", fields: { remaining: "left" }, unit: "credits" as const, divisor: 1, label: "Credits" };
+  const gateway = (setting = usage): QuotaAccount => ({ id: "g1", provider: "claude", home: "/isolated/g1", command: [], env: {}, identityKey: "gateway:g1", generation: 0,
+    gateway: { usage: setting, credentials: async () => ({ baseUrl: "https://gw.example", token: "fixture" }) } });
+  const balances = [{ id: "balance", label: "Credits", used: 588, remaining: 412, limit: 1000, unit: "credits" as const, detail: null }];
+  const reading = { identityKey: "gateway:g1", plan: "Team", windows: [], balances };
+
+  it("shows balances, then keeps the last reading when a later read fails", async () => {
+    let now = 0;
+    const fetchUsage = vi.fn(async () => reading);
+    const service = createUsageService({ getAccounts: async () => [gateway()], fetchUsage, now: () => now });
+    expect((await service.refresh())[0]).toMatchObject({ accountId: "g1", status: "ok", plan: "Team", balances });
+    fetchUsage.mockRejectedValue(new UsageError("unavailable", "gateway_usage", undefined, "The gateway refused the token (401)."));
+    now = 3_600_000;
+    expect((await service.refresh())[0]).toMatchObject({ status: "stale", balances, error: "The gateway refused the token (401)." });
+  });
+  it("is unavailable, never needs_auth, when the first read fails", async () => {
+    const fetchUsage = vi.fn(async () => { throw new UsageError("unavailable", "gateway_usage", undefined, "The usage reply has no number at data.total_used."); });
+    const service = createUsageService({ getAccounts: async () => [gateway()], fetchUsage, now: () => 0 });
+    expect((await service.refresh())[0]).toMatchObject({ status: "unavailable", balances: [], error: "The usage reply has no number at data.total_used." });
+  });
+  it("waits as long as the gateway asks", async () => {
+    const fetchUsage = vi.fn(async () => { throw new UsageError("unavailable", "gateway_usage", 30_000, "The gateway's usage request failed (429)."); });
+    const service = createUsageService({ getAccounts: async () => [gateway()], fetchUsage, now: () => 1_000 });
+    expect(Date.parse((await service.refresh())[0].nextRetryAt!)).toBe(31_000);
+  });
+  it("restores the last reading after a restart, and drops it when the setting changed", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "gateway-cache-")), cachePath = join(dir, "usage-cache.json");
+    try {
+      const first = createUsageService({ getAccounts: async () => [gateway()], fetchUsage: async () => reading, cachePath, now: () => 0 });
+      await first.refresh(); await first.close();
+      const same = createUsageService({ getAccounts: async () => [gateway()], fetchUsage: async () => reading, cachePath, now: () => 0 });
+      expect((await same.list())[0]).toMatchObject({ status: "stale", balances });
+      await same.close();
+      const changed = createUsageService({ getAccounts: async () => [gateway({ ...usage, fields: { remaining: "other" } })], fetchUsage: async () => reading, cachePath, now: () => 0 });
+      expect((await changed.list())[0]).toMatchObject({ status: "unavailable", windows: [] });
+      expect((await changed.list())[0].balances ?? []).toEqual([]);
+      await changed.close();
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+  it("drops the shown reading at once when the setting changes while running", async () => {
+    let setting = usage;
+    const service = createUsageService({ getAccounts: async () => [gateway(setting)], fetchUsage: async () => reading, now: () => 0 });
+    expect((await service.refresh())[0]).toMatchObject({ status: "ok", balances });
+    setting = { ...usage, label: "Other" };
+    expect((await service.list())[0].balances ?? []).toEqual([]);
+  });
+  it("uses a file reading's own time and passes its stale reason through", async () => {
+    const fetchedAt = "2026-11-22T05:55:00.000Z";
+    const fetchUsage = vi.fn(async () => ({ ...reading, fetchedAt }));
+    const service = createUsageService({ getAccounts: async () => [gateway()], fetchUsage, now: () => Date.parse("2026-11-22T06:00:00.000Z") });
+    expect((await service.refresh())[0]).toMatchObject({ status: "ok", fetchedAt });
+  });
+});

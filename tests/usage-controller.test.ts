@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AccountController } from "../server/controller";
 import { UsageError } from "../server/usage";
+import { addGateway, setGatewayUsage } from "../server/claude-profiles";
 
 const boundary=vi.hoisted(()=>({fetch:vi.fn(),probe:vi.fn()}));
 // Renewal reads real credentials; these tests use the real system Claude home.
@@ -47,5 +48,30 @@ describe("controller quota verification",()=>{
       const snapshot=(await restarted.usage.refresh("system-claude"))[0];
       expect(snapshot).toMatchObject({status:"stale",windows:result.windows});
     } finally {await restarted.close();}
+  });
+});
+
+describe("gateways with a usage reader",()=>{
+  const usage={kind:"endpoint" as const,path:"/usage",fields:{remaining:"left"},unit:"credits" as const,divisor:1,label:"Credits"};
+  it("joins the scheduler with a fixed identity and without credential probes, even when the Claude CLI is missing",async()=>{
+    const root=await mkdtemp(join(tmpdir(),"quota-gateway-"));roots.push(root);
+    const controller=new AccountController(root);await controller.ready;
+    try {
+      await controller.store.change(state=>{state.available.claude=true;});
+      const plain=await addGateway(controller.store,{label:"Plain",base_url:"https://plain.example",api_token:"fixture-a"});
+      const read=await addGateway(controller.store,{label:"Read",base_url:"https://read.example/v1",api_token:"fixture-b"});
+      await setGatewayUsage(controller.store,read.id,usage);
+      await controller.store.change(state=>{state.available.claude=false;state.commands.claude=null;});
+      boundary.probe.mockClear();
+      const accounts=await controller.quotaAccounts({verifyAccountId:read.id});
+      const quota=accounts.find(a=>a.id===read.id)!;
+      expect(accounts.map(a=>a.id)).not.toContain(plain.id);
+      expect(quota).toMatchObject({provider:"claude",identityKey:"gateway:"+read.id,command:[],gateway:{usage}});
+      expect(quota.requireIdentityVerification).toBeFalsy();
+      expect(await quota.gateway!.credentials()).toEqual({baseUrl:"https://read.example/v1",token:"fixture-b"});
+      expect(boundary.probe).not.toHaveBeenCalled();
+      boundary.fetch.mockResolvedValue({identityKey:null,plan:null,windows:[],balances:[{id:"balance",label:"Credits",used:null,remaining:412,limit:null,unit:"credits",detail:null}]});
+      expect((await controller.usage.refresh(read.id)).find(s=>s.accountId===read.id)).toMatchObject({status:"ok",balances:[{remaining:412}]});
+    } finally {await controller.close();}
   });
 });

@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, readdir, realpath, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { AccountSchema, GatewayInput } from "../shared/contracts";
+import { AccountSchema, GatewayInput, GatewayUsageSchema, type GatewayUsage } from "../shared/contracts";
+import { GatewayUsageError, readGatewayUsage, type GatewayDependencies } from "./usage/gateway";
 import { atomicWrite, isMissing } from "./files";
 import { assertClaudeSettings, prepareProfile } from "./profiles";
 import { accountFrom, type AccountStore, type Registry, type StoredAccount } from "./store";
@@ -121,4 +122,29 @@ export async function gatewayArguments(root: string, original: string[], endpoin
   await atomicWrite(file, JSON.stringify({ ...settings, env: { ...settings.env, ...env } }));
   args[last] = inline ? "--settings=" + file : file;
   return { args, file };
+}
+
+function gatewayFrom(state: { accounts: StoredAccount[] }, accountId: string): StoredAccount {
+  const account = state.accounts.find(a => a.id === accountId);
+  if (!account || account.source !== "gateway" || account.provider !== "claude") throw new Error("Choose a Claude gateway.");
+  return account;
+}
+/** Saves how a gateway's usage is read; `null` turns the reading off. The setting holds no secret. */
+export async function setGatewayUsage(store: AccountStore, accountId: string, usage: GatewayUsage | null) {
+  const parsed = usage === null ? null : GatewayUsageSchema.parse(usage);
+  await store.change(state => {
+    const account = gatewayFrom(state, accountId);
+    if (parsed) account.usage = parsed; else delete account.usage;
+  });
+}
+/** Runs a reader once without saving it, so the form can show what it finds. The result carries amounts and labels only. */
+export async function testGatewayUsage(store: AccountStore, accountId: string, usage: GatewayUsage, deps: GatewayDependencies = {}) {
+  const parsed = GatewayUsageSchema.parse(usage);
+  const account = gatewayFrom(await store.read(), accountId);
+  try {
+    const reading = await readGatewayUsage(parsed, async () => { const env = await gatewayEnvironment(store.root, account); return { baseUrl: env.ANTHROPIC_BASE_URL, token: env.ANTHROPIC_AUTH_TOKEN }; }, deps);
+    return { ok: true, plan: reading.plan, windows: reading.windows, balances: reading.balances, error: null };
+  } catch (error) {
+    return { ok: false, plan: null, windows: [], balances: [], error: error instanceof GatewayUsageError ? error.message : "The gateway's usage could not be read." };
+  }
 }

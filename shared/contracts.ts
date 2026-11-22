@@ -110,6 +110,10 @@ export const GatewayInput = z.object({
 });
 export const addGateway = defineRpc({ name: "claude.gateway-add", input: GatewayInput, output: AccountSchema });
 export const rotateGateway = defineRpc({ name: "claude.gateway-rotate", input: AccountId.extend({ api_token: GatewayInput.shape.api_token }), output: Empty });
+export const setGatewayUsage = defineRpc({ name: "claude.gateway-usage-set", input: AccountId.extend({ usage: GatewayUsageSchema.nullable() }), output: Empty });
+export const GatewayUsageTestSchema = z.object({ ok: z.boolean(), plan: z.string().nullable(), windows: z.array(UsageWindowSchema), balances: z.array(UsageBalanceSchema), error: z.string().nullable() });
+export type GatewayUsageTest = z.infer<typeof GatewayUsageTestSchema>;
+export const testGatewayUsage = defineRpc({ name: "claude.gateway-usage-test", input: AccountId.extend({ usage: GatewayUsageSchema }), output: GatewayUsageTestSchema });
 export const listProfiles = defineRpc({ name: "claude.profiles", input: Empty, output: z.array(z.string()) });
 export const linkProfile = defineRpc({ name: "claude.link", input: z.object({ name: z.string().max(255) }), output: AccountSchema });
 export const setHeadroom = defineRpc({ name: "claude.headroom", input: z.object({ enabled: z.boolean() }), output: Empty });

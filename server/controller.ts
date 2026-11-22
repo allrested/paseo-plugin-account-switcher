@@ -207,7 +207,8 @@ export class AccountController {
   const target=initial.accounts.find(account=>account.id===input.verifyAccountId);
   if(target&&target.source!=="gateway"&&initial.available[target.provider]&&initial.commands[target.provider]&&!target.loginToken)await this.checkAccount(target.id,true).catch(()=>{this.credentialProofs.delete(target.id);});
   const state=await this.store.read();
-  const accounts = state.accounts.filter(a => a.source !== "gateway" && state.available[a.provider] && state.commands[a.provider] && !a.loginToken);
+  // A gateway joins only with a usage reader. The reader needs neither the Claude CLI nor a sign-in.
+  const accounts = state.accounts.filter(a => a.source === "gateway" ? Boolean(a.usage) : state.available[a.provider] && state.commands[a.provider] && !a.loginToken);
   const allowed = await Promise.all(accounts.map(async account => {
     if (account.source === "linked") {
       try { await validateLinkedProfile(linkedCredentialHome(account)); } catch { return []; }
@@ -217,6 +218,11 @@ export class AccountController {
   return allowed.flat();
  }
  private toQuotaAccount(account:StoredAccount,state:Registry):QuotaAccount {
+   if(account.source==="gateway"&&account.usage){
+     const root=this.store.root;
+     return {id:account.id,provider:account.provider,home:account.home,command:[],env:{},identityKey:`gateway:${account.id}`,generation:account.generation,
+       gateway:{usage:account.usage,credentials:async()=>{const env=await gatewayEnvironment(root,account);return{baseUrl:env.ANTHROPIC_BASE_URL,token:env.ANTHROPIC_AUTH_TOKEN};}}};
+   }
    const env=accountEnvironment(account,state);
    const credentialHome=account.provider==="claude"?(env.CLAUDE_SECURESTORAGE_CONFIG_DIR??env.CLAUDE_CONFIG_DIR)||join(env.HOME||homedir(),".claude"):account.home;
    const quota:QuotaAccount={id:account.id,provider:account.provider,home:credentialHome,identityKey:account.identityKey,generation:account.generation,command:accountCommand(state,account.provider),env,requireIdentityVerification:account.identityKey!==null};

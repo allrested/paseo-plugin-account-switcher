@@ -6,12 +6,12 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createServer } from "node:http";
 import { AccountStore } from "../server/store";
-import { addGateway, discoverProfiles, gatewayArguments, linkProfile, rotateGateway, gatewayEnvironment } from "../server/claude-profiles";
+import { addGateway, discoverProfiles, gatewayArguments, linkProfile, rotateGateway, gatewayEnvironment, setGatewayUsage, testGatewayUsage } from "../server/claude-profiles";
 import { launcherPath, writeLaunchers } from "../server/integration";
 import { accountEnvironment } from "../server/auth";
 import { AccountController } from "../server/controller";
 import { SwitchService } from "../server/switching";
-import { GatewayInput } from "../shared/contracts";
+import { BDDEV_USAGE, GatewayInput } from "../shared/contracts";
 import { defaultCommands } from "../client/command";
 
 const roots:string[]=[];
@@ -97,4 +97,30 @@ it("sends the synthetic bearer only from the explicitly bound launcher and exclu
     await expect(run(launcherPath(store.root,"claude"),[],{env:{...process.env,PASEO_AGENT_ID:"explicit"}})).rejects.toThrow(/launcher failed/);
     expect(requests).toHaveLength(1);
   } finally {await controller.close(); await new Promise<void>(done=>http.close(()=>done()));}
+});
+it("saves, clears and tests a gateway's usage reader without exposing the token",async()=>{
+  const {store}=await fixture(), token="only-a-test-bearer";
+  const seen:unknown[]=[]; let status=200;
+  const http=createServer((req,res)=>{seen.push([req.url,req.headers.authorization]);res.statusCode=status;res.end(JSON.stringify({data:{name:"Team",total_granted:100000000,total_used:58800000,total_available:41200000,unlimited_quota:false}}));});
+  await new Promise<void>(done=>http.listen(0,"127.0.0.1",done));
+  const address=http.address(); if(!address || typeof address==="string")throw Error("No port");
+  try {
+    await store.change(s=>{s.available.claude=true;});
+    const gateway=await addGateway(store,{label:"Proxy",base_url:"http://127.0.0.1:"+address.port+"/gateway",api_token:token});
+    const tested=await testGatewayUsage(store,gateway.id,BDDEV_USAGE);
+    expect(tested).toEqual({ok:true,plan:"Team",windows:[],balances:[{id:"balance",label:"Credits",used:588,remaining:412,limit:1000,unit:"credits",detail:null}],error:null});
+    expect(seen).toEqual([["/api/usage/token/","Bearer "+token]]);
+    expect((await store.read()).accounts.find(a=>a.id===gateway.id)!.usage).toBeUndefined();
+    status=401;
+    const refused=await testGatewayUsage(store,gateway.id,BDDEV_USAGE);
+    expect(refused).toEqual({ok:false,plan:null,windows:[],balances:[],error:"The gateway refused the token (401)."});
+    expect(JSON.stringify([tested,refused])).not.toContain(token);
+    await setGatewayUsage(store,gateway.id,BDDEV_USAGE);
+    expect((await store.read()).accounts.find(a=>a.id===gateway.id)!.usage).toEqual(BDDEV_USAGE);
+    expect((await store.snapshot()).accounts.find(a=>a.id===gateway.id)!.usage).toEqual(BDDEV_USAGE);
+    await setGatewayUsage(store,gateway.id,null);
+    expect((await store.read()).accounts.find(a=>a.id===gateway.id)!.usage).toBeUndefined();
+    await expect(setGatewayUsage(store,"system-claude",BDDEV_USAGE)).rejects.toThrow("Choose a Claude gateway.");
+    await expect(testGatewayUsage(store,"system-claude",BDDEV_USAGE)).rejects.toThrow("Choose a Claude gateway.");
+  } finally {await new Promise(done=>http.close(done));}
 });

@@ -1,6 +1,6 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import * as rpc from "./shared/contracts";
-import { addGateway, discoverProfiles, linkProfile, rotateGateway } from "./server/claude-profiles";
+import { addGateway, discoverProfiles, linkProfile, rotateGateway, setGatewayUsage, testGatewayUsage } from "./server/claude-profiles";
 import { AccountController } from "./server/controller";
 import { AutoFailoverGuard, extraUsageLeft, failoverDecision, mayBeUsedUp } from "./server/failover";
 import type { PaseoApi } from "./server/paseo-api";
@@ -36,6 +36,9 @@ export default function contribute(server:PluginServerContext){
  server.handle(rpc.addAccount,async({provider,label},{paseo})=>{await controller.ensureRuntime(paseo);return controller.add(provider,label);});
  server.handle(rpc.addGateway,async(input,{paseo})=>{await controller.ensureRuntime(paseo);return addGateway(controller.store,input);});
  server.handle(rpc.rotateGateway,async({accountId,api_token})=>{await controller.ready;await rotateGateway(controller.store,accountId,api_token);return{};});
+ // A changed reader changes the account's fingerprint, so the scheduler drops the old reading on its own; the refresh fetches the new one.
+ server.handle(rpc.setGatewayUsage,async({accountId,usage})=>{await controller.ready;await setGatewayUsage(controller.store,accountId,usage);void controller.usage.refresh(accountId).catch(()=>{});return{};});
+ server.handle(rpc.testGatewayUsage,async({accountId,usage})=>{await controller.ready;return testGatewayUsage(controller.store,accountId,usage);});
  server.handle(rpc.listProfiles,async(_,{paseo})=>{await controller.ensureRuntime(paseo);return discoverProfiles(controller.store);});
  server.handle(rpc.linkProfile,async({name},{paseo})=>{await controller.ensureRuntime(paseo);return linkProfile(controller.store,name);});
  server.handle(rpc.setHeadroom,async({enabled})=>{await controller.ready;await controller.store.change(r=>{r.preferHeadroom=enabled;});return{};});
