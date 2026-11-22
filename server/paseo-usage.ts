@@ -36,6 +36,11 @@ export function discoverAccounts(registry: Pick<Registry, "accounts">, scope: Us
   const systemIdentity = (provider: Provider) => registry.accounts.find(a => a.source === "system" && a.provider === provider)?.identityKey ?? null;
   const found = new Map<string, UsageAccount>();
   for (const account of registry.accounts) {
+    // A gateway has no login to compare. It is listed once it has a usage reader, under a hash of its own id.
+    if (account.source === "gateway") {
+      if (account.usage) found.set(`gateway:${account.id}`, { key: hashAccountKey(`gateway:${account.id}`), label: account.label, harness: cliName[account.provider], input: { accountId: account.id } });
+      continue;
+    }
     // `loginToken` marks a sign-in still in progress. An `error` status is a failed check, so the last limits stay worth showing.
     if ((account.source !== "managed" && account.source !== "linked") || account.authStatus === "needs_auth" || account.loginToken || !account.identityKey) continue;
     if (account.identityKey === systemIdentity(account.provider)) continue;
@@ -90,6 +95,8 @@ function withUniqueIds(windows: PaseoWindow[]): PaseoWindow[] {
 
 export function usageReport(snapshot: UsageSnapshot | undefined): UsageReport {
   if (snapshot?.status === "needs_auth") return { status: "error", error: "Needs sign-in in Account Switcher." };
+  // Only a gateway's snapshot carries `balances`, and its error is already a reason written for the user.
+  if (snapshot?.status === "unavailable" && snapshot.balances && snapshot.error) return { status: "error", error: snapshot.error };
   if (!snapshot || snapshot.status === "unavailable") return { status: "error", error: "No usage data from the provider yet." };
   // A stale snapshot keeps the last good reading; the plugin's own view marks it, Paseo's has no place for that.
   // A window with neither a percentage nor a detail is a limit the provider names without data (Claude lists several);
@@ -101,7 +108,9 @@ export function usageReport(snapshot: UsageSnapshot | undefined): UsageReport {
     const shown = windows[index];
     return text && shown ? [{ id: shown.id, label: shown.label, value: text }] : [];
   });
-  return { status: "available", ...(snapshot.plan ? { planLabel: snapshot.plan } : {}), windows, ...(details.length ? { details } : {}) };
+  const balances = (snapshot.balances ?? []).map(({ id, label, used, remaining, limit, unit }) => ({ id, label, used, remaining, limit, unit }));
+  for (const balance of snapshot.balances ?? []) if (balance.detail?.trim()) details.push({ id: balance.id, label: balance.label, value: balance.detail.trim() });
+  return { status: "available", ...(snapshot.plan ? { planLabel: snapshot.plan } : {}), windows, ...(balances.length ? { balances } : {}), ...(details.length ? { details } : {}) };
 }
 
 /** Registers the source; false on a daemon without usage sources (Paseo before 0.11). */

@@ -29,6 +29,30 @@ Open **Accounts → Claude** on the host that runs your agents.
 - **Prefer the most available subscription** picks the Claude subscription with the most remaining quota in its tightest account-wide window. Fresh readings take precedence. A tie favors the default, or Current CLI when no default is set. Explicit account choices take precedence over balancing.
 - **Move idle agents** takes a source and destination subscription. It reports each agent’s outcome and skips busy agents and pending selections. Gateways require an explicit choice for each agent and stay outside subscription usage checks, bulk moves, and automatic failover.
 
+### Gateway usage
+
+A gateway shows no usage until you tell Accounts how to read it. Open the gateway's **Manage → Usage** and choose:
+
+- **Off.** Nothing is read. This is the default.
+- **Usage endpoint.** A JSON usage endpoint on the gateway's own address. Enter its path and where each value is in the reply (for example `data.total_used`), a unit and a divisor. The request carries the gateway's token and goes only to the gateway's own address; an endpoint on another host is refused. **Fill in for BDDev** enters the values for `api.bddevlab.online`.
+- **External reading.** A file on the host that another tool keeps up to date. A reading older than 30 minutes shows as stale.
+
+**Test** shows what the reader finds before you **Save**. The card, the agent's account switcher and Paseo's Usage view then show the reading: amounts such as "412 of 1,000 credits left" and percent windows. A field that is missing or not a number makes the reading unavailable and names the field; it is never shown as 0. Usage is shown only: gateways stay out of headroom balancing, automatic failover and idle moves.
+
+The external file holds the time of the reading and a Paseo usage report:
+
+```json
+{
+  "fetchedAt": "2026-11-22T06:00:00.000Z",
+  "report": {
+    "status": "available",
+    "planLabel": "Team A",
+    "windows": [{ "id": "weekly", "label": "Weekly", "usedPct": 40, "resetsAt": "2026-11-25T00:00:00.000Z" }],
+    "balances": [{ "id": "today", "label": "Today", "used": 3.2, "unit": "usd" }]
+  }
+}
+```
+
 For this fork, install the Git source at the reviewed commit on your host:
 
 ```sh

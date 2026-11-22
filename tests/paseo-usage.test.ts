@@ -297,3 +297,33 @@ describe("registerPaseoUsage", () => {
     expect(await source?.fetch(input)).toMatchObject({ status: "available" });
   });
 });
+
+describe("gateways in the Usage view", () => {
+  const usage = { kind: "file" as const, path: "/data/report.json" };
+  const gateway = (overrides: Partial<StoredAccount> = {}) => account({ id: "gw", label: "BDDev", source: "gateway", baseUrl: "https://gw.example", identityKey: null, generation: 0, ...overrides });
+  const snapshot = (overrides: Partial<UsageSnapshot> = {}): UsageSnapshot => ({ accountId: "gw", provider: "claude", status: "ok", plan: "Team", windows: [],
+    balances: [{ id: "balance", label: "Credits", used: 588, remaining: 412, limit: 1000, unit: "credits", detail: null }],
+    fetchedAt: "2026-11-22T00:00:00.000Z", checkedAt: "2026-11-22T00:00:00.000Z", nextRetryAt: null, error: null, ...overrides });
+
+  it("lists a gateway only when it has a usage reader, and only in the global list", () => {
+    expect(discoverAccounts(registry(gateway({ usage })), { kind: "global" })).toEqual([
+      { key: hashAccountKey("gateway:gw"), label: "BDDev", harness: "Claude Code", input: { accountId: "gw" } }]);
+    expect(discoverAccounts(registry(gateway()), { kind: "global" })).toEqual([]);
+    expect(discoverAccounts(registry(gateway({ usage })), UsageScopeSchema.parse({ kind: "session", provider: "claude", model: "opus", env: {} }))).toEqual([]);
+  });
+  it("reports a balance without windows", () => {
+    expect(usageReport(snapshot())).toEqual({ status: "available", planLabel: "Team", windows: [],
+      balances: [{ id: "balance", label: "Credits", used: 588, remaining: 412, limit: 1000, unit: "credits" }] });
+  });
+  it("adds a detail for an unlimited balance", () => {
+    const report = usageReport(snapshot({ balances: [{ id: "balance", label: "Credits", used: 10, remaining: null, limit: null, unit: "credits", detail: "Unlimited" }] }));
+    expect(report).toMatchObject({ status: "available", balances: [{ id: "balance", used: 10, remaining: null, limit: null }], details: [{ id: "balance", label: "Credits", value: "Unlimited" }] });
+  });
+  it("passes a gateway's own reason on, and keeps the last reading when stale", () => {
+    expect(usageReport(snapshot({ status: "unavailable", balances: [], error: "The gateway refused the token (401)." }))).toEqual({ status: "error", error: "The gateway refused the token (401)." });
+    expect(usageReport(snapshot({ status: "stale", error: "The usage file is older than 30 minutes." }))).toMatchObject({ status: "available", balances: [{ remaining: 412 }] });
+  });
+  it("keeps the wording for a subscription with no data", () => {
+    expect(usageReport({ ...snapshot({ status: "unavailable", error: "The limits service is temporarily unavailable." }), balances: undefined })).toEqual({ status: "error", error: "No usage data from the provider yet." });
+  });
+});

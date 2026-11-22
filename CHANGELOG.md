@@ -5,6 +5,7 @@
 ### Added in the allrested fork
 
 - Named Claude gateways with a custom endpoint and separately stored, replaceable bearer token. Select a gateway per agent.
+- Usage for gateways: read it from a JSON usage endpoint on the gateway (with ready values for BDDev) or from a file another tool writes, and show amounts and percent windows on the card, in the switcher and in Paseo's Usage view.
 - Discover and link existing Claude subscription profiles, prefer subscriptions with more headroom for new agents, and move idle agents between subscriptions with per-agent results.
 
 ### Fixed
