@@ -4,7 +4,9 @@ import type { UsageBalance, UsageUnit, UsageWindow } from "../../../shared/contr
 export type Rule = { label: string; find: string; type: "percent" | "amount"; unit?: UsageUnit; page?: number };
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const NUMBER = /^\$?\s*(-?\d[\d,]*(?:\.\d+)?)\s*([KMB])?\s*(%)?$/i;
+// Thousands must be grouped properly, a K/M/B suffix sits directly on the number, and a suffix and a percent sign never go together:
+// "5 m", "1,5" and "2.2M%" are text, not values.
+const NUMBER = /^\$?\s*(-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?:([KMB])|\s*(%))?$/i;
 const SCALE: Record<string, number> = { K: 1e3, M: 1e6, B: 1e9 };
 const UNIT_MS: Record<string, number> = { d: 86_400_000, h: 3_600_000, m: 60_000 };
 const fold = (text: string) => text.trim().toLowerCase();
@@ -33,10 +35,10 @@ export function parseValue(line: string): { value: number; percent: boolean } | 
 
 function resetTime(lines: string[], now: Date): string | null {
   for (const line of lines) {
-    const relative = /resets in ((?:\d+\s*[dhm]\s*)+)/i.exec(line);
+    const relative = /resets in ((?:\d+\s*[dhm]\b\s*)+)/i.exec(line);
     if (relative) {
       let ms = 0;
-      for (const [, count, unit] of relative[1].matchAll(/(\d+)\s*([dhm])/gi)) ms += Number(count) * UNIT_MS[unit.toLowerCase()];
+      for (const [, count, unit] of relative[1].matchAll(/(\d+)\s*([dhm])\b/gi)) ms += Number(count) * UNIT_MS[unit.toLowerCase()];
       return new Date(now.getTime() + ms).toISOString();
     }
     const absolute = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})/.exec(line);
@@ -53,11 +55,14 @@ const slug = (label: string) => label.toLowerCase().replace(/[^a-z0-9]+/g, "-").
  */
 export function extractReadings(lines: string[], rules: Rule[], now: Date): { windows: UsageWindow[]; balances: UsageBalance[]; missing: string[] } {
   const windows: UsageWindow[] = [], balances: UsageBalance[] = [], missing: string[] = [];
+  // A tile that shows no number must not borrow the next tile's: the search for a value stops at any caption.
+  const captions = new Set(rules.map(rule => fold(rule.find)));
   for (const rule of rules) {
     const found: { value: number; at: number; owner: string | null }[] = [];
     lines.forEach((line, index) => {
       if (fold(line) !== fold(rule.find)) return;
       for (let offset = 1; offset <= 3; offset++) {
+        if (captions.has(fold(lines[index + offset] ?? ""))) return;
         const parsed = parseValue(lines[index + offset] ?? "");
         if (!parsed || parsed.percent !== (rule.type === "percent")) continue;
         let owner: string | null = null;

@@ -1,4 +1,5 @@
-import { lstat, readFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { open } from "node:fs/promises";
 import type { GatewayUsage, UsageBalance, UsageUnit, UsageWindow } from "../../shared/contracts";
 import { retryAfter } from "./claude";
 import { readDashboardUsage, type DashboardDependencies } from "./dashboard";
@@ -113,14 +114,27 @@ const text = (value: unknown, max: number): string | null => typeof value === "s
 export async function readFileUsage(usage: FileUsage, deps: Pick<GatewayDependencies, "now"> = {}): Promise<GatewayReading> {
   let raw: string;
   try {
-    // lstat, not stat: a link could point the reader at any file the daemon can read.
-    const stat = await lstat(usage.path);
-    if (!stat.isFile()) throw new GatewayUsageError("The usage file is not a regular file.");
-    if (stat.size > MAX_BYTES) throw new GatewayUsageError("The usage file is too large.");
-    raw = await readFile(usage.path, "utf8");
+    // One handle, opened without following a link, checked and read with a bound: the file cannot be swapped for
+    // another or grow between the check and the read, and a link cannot point the reader at any file the daemon can read.
+    const handle = await open(usage.path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      const stat = await handle.stat();
+      if (!stat.isFile()) throw new GatewayUsageError("The usage file is not a regular file.");
+      if (stat.size > MAX_BYTES) throw new GatewayUsageError("The usage file is too large.");
+      const buffer = Buffer.alloc(MAX_BYTES + 1);
+      let size = 0;
+      for (;;) {
+        const { bytesRead } = await handle.read(buffer, size, buffer.length - size, null);
+        if (!bytesRead) break;
+        size += bytesRead;
+        if (size > MAX_BYTES) throw new GatewayUsageError("The usage file is too large.");
+      }
+      raw = buffer.subarray(0, size).toString("utf8");
+    } finally { await handle.close().catch(() => {}); }
   } catch (error) {
     if (error instanceof GatewayUsageError) throw error;
-    throw new GatewayUsageError((error as NodeJS.ErrnoException)?.code === "ENOENT" ? "The usage file is missing." : "The usage file cannot be read.");
+    const code = (error as NodeJS.ErrnoException)?.code;
+    throw new GatewayUsageError(code === "ENOENT" ? "The usage file is missing." : code === "ELOOP" || code === "EISDIR" || code === "EMLINK" ? "The usage file is not a regular file." : "The usage file cannot be read.");
   }
   let saved: unknown;
   try { saved = JSON.parse(raw); } catch { throw new GatewayUsageError("The usage file is not a usage report."); }
@@ -151,7 +165,7 @@ export async function readGatewayUsage(usage: GatewayUsage, gateway: () => Promi
   if (usage.kind === "file") return readFileUsage(usage, deps);
   if (usage.kind === "dashboard") {
     const now = deps.now;
-    return readDashboardUsage(deps.accountId ?? "", usage, { openTab: deps.openTab, sleep: deps.sleep, force: deps.force, ...(now ? { now: () => new Date(now()) } : {}) });
+    return readDashboardUsage(deps.accountId ?? "", usage, { openTab: deps.openTab, sleep: deps.sleep, force: deps.force, signal: deps.signal, ...(now ? { now: () => new Date(now()) } : {}) });
   }
   let credentials: GatewayCredentials;
   try { credentials = await gateway(); } catch { throw new GatewayUsageError("The saved gateway credentials are unavailable."); }

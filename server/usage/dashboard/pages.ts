@@ -19,8 +19,10 @@ export interface PageOptions {
 export function clickAccountExpression(text: string): string {
   return `(() => {
   const text = ${JSON.stringify(text)};
-  const tile = [...document.querySelectorAll("[data-test-id],[role=button],button,a,.table")]
-    .find((el) => el.innerText && el.innerText.includes(text));
+  const shown = [...document.querySelectorAll("[data-test-id],[role=button],button,a,.table")]
+    .filter((el) => el.innerText && el.innerText.includes(text));
+  // The account's own tile, not a wrapper around several accounts or a button that merely mentions it.
+  const tile = shown.find((el) => el.innerText.trim() === text) || shown.sort((a, b) => a.innerText.length - b.innerText.length)[0];
   if (!tile) return false;
   tile.click();
   return true;
