@@ -1,4 +1,4 @@
-import type { Account, AccountState, Provider, UsageBalance, UsageSnapshot, UsageWindow } from "../shared/contracts";
+import { isHostGateway, type Account, type AccountState, type Provider, type UsageBalance, type UsageSnapshot, type UsageWindow } from "../shared/contracts";
 
 export const providerName: Record<Provider, string> = { claude: "Claude", codex: "Codex · ChatGPT" };
 
@@ -157,6 +157,7 @@ export function freshness(snapshot: UsageSnapshot | undefined, now = Date.now())
 
 export function accountStatus(account: Account, snapshot: UsageSnapshot | undefined): { text: string; tone: Tone } {
   if (account.source === "gateway") return { text: "Gateway configured", tone: "muted" };
+  if (isHostGateway(account)) return { text: "Gateway from Claude settings", tone: "muted" };
   if (account.login) return { text: "sign-in in progress", tone: "warning" };
   if (account.authStatus === "ready" && snapshot?.status === "needs_auth") return { text: "limits require sign-in", tone: "warning" };
   return {

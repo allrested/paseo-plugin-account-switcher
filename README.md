@@ -30,6 +30,17 @@ Open **Accounts → Claude** on the host that runs your agents.
 - **Prefer the most available subscription** picks the Claude subscription with the most remaining quota in its tightest account-wide window. Fresh readings take precedence. A tie favors the default, or Current CLI when no default is set. Explicit account choices take precedence over balancing.
 - **Move idle agents** takes a source and destination subscription. It reports each agent’s outcome and skips busy agents and pending selections. Gateways require an explicit choice for each agent and stay outside subscription usage checks, bulk moves, and automatic failover.
 
+### A host whose Claude is a gateway
+
+On some hosts the Claude CLI itself is set up for a gateway: its `settings.json` carries `ANTHROPIC_BASE_URL` with a token, a key or a key helper. Accounts shows that host account as **Gateway from Claude settings** with the address. It is ready without a sign-in check, and it can be the default, be picked in an agent's switcher and be named with `/account`.
+
+- Agents on the host account launch exactly as before; the plugin does not touch the host's settings or store its token.
+- Other accounts you add on such a host get the host's settings without the gateway address, token and key helper, so a subscription account talks to Anthropic.
+- The host gateway takes the same **Manage → Usage** setting as an added gateway. A usage endpoint is asked with the token from the host's settings.
+- Like added gateways, it is never chosen automatically: not by "prefer the most available subscription", not by automatic failover, and not by "move idle agents". A new agent whose default is the host gateway starts there whatever its reading says.
+
+A gateway set through the daemon's environment or Paseo's provider `env` is still refused when account switching is turned on.
+
 ### Gateway usage
 
 A gateway shows no usage until you tell Accounts how to read it. Open the gateway's **Manage → Usage** and choose:

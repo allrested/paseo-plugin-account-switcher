@@ -7,6 +7,7 @@
 - Named Claude gateways with a custom endpoint and separately stored, replaceable bearer token. Select a gateway per agent.
 - Usage for gateways: read it from a JSON usage endpoint on the gateway (with ready values for BDDev), from a signed-in dashboard page through the shared browser, or from a file another tool writes, and show amounts and percent windows on the card, in the switcher and in Paseo's Usage view.
 - In an agent's account switcher, a gateway with a usage reader shows what is left ("37.1% left · 9,300 credits") in the **Switch to** list instead of its address.
+- Account switching works on a host whose own Claude settings point at a gateway: the host account is shown as a gateway and is ready without a sign-in, other accounts get the host's settings without the gateway, and the host gateway can have a usage reader.
 - Import a gateway from one of Paseo's custom Claude providers that carries a base URL and bearer token, from **Find local profiles**.
 - Discover and link existing Claude subscription profiles, prefer subscriptions with more headroom for new agents, and move idle agents between subscriptions with per-agent results.
 

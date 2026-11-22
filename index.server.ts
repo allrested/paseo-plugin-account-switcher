@@ -50,7 +50,7 @@ export default function contribute(server:PluginServerContext){
  server.handle(rpc.moveCandidates,async({accountId},{paseo})=>{
    await controller.ensureRuntime(paseo);
    const state=await controller.store.read(), source=accountFrom(state,accountId);
-   if(source.provider!=="claude" || source.source==="gateway")throw new Error("Choose a Claude subscription.");
+   if(source.provider!=="claude" || rpc.isGateway(source))throw new Error("Choose a Claude subscription.");
    const ids=new Set(state.bindings.filter(b=>b.provider==="claude" && b.currentAccountId===accountId).map(b=>b.agentId));
    if(source.source==="system"){
      const seen=new Set<string>();
@@ -69,7 +69,7 @@ export default function contribute(server:PluginServerContext){
  server.handle(rpc.moveIdleAgent,async({agentId,from,to},{paseo})=>{
    await controller.ensureRuntime(paseo);
    const state=await controller.store.read(), accounts=[accountFrom(state,from),accountFrom(state,to)];
-   if(from===to||accounts.some(a=>a.provider!=="claude"||a.source==="gateway"))throw new Error("Choose two different Claude subscriptions.");
+   if(from===to||accounts.some(a=>a.provider!=="claude"||rpc.isGateway(a)))throw new Error("Choose two different Claude subscriptions.");
    try{
      await controller.switcher(paseo).switchTo(agentId,to,from);
      return {moved:true, detail:"Moved"};
@@ -156,7 +156,7 @@ export default function contribute(server:PluginServerContext){
    await controller.ready;
    const state=await controller.store.read(),target=state.accounts.find(a=>a.id===accountId);
    if(!target)throw new SwitchRefusal("Account not found.");
-   if(target.source==="gateway")throw new SwitchRefusal("Select a subscription for failover.");
+   if(rpc.isGateway(target))throw new SwitchRefusal("Select a subscription for failover.");
    // Named at the click: the account the agent leaves now, with a launch not confirmed yet confirmed by its receipt.
    const currentId=await controller.accountOf(paseo,agentId,target.provider,state),from=labelOf(state,currentId);
    if(!currentId||!from)throw new SwitchRefusal("This agent's account is not confirmed yet. Choose an account in the account switcher instead.");
@@ -229,7 +229,7 @@ export default function contribute(server:PluginServerContext){
    if(!await controller.usage.checksEnabled())return;
    // An agent started with no app open may have a launch nothing has confirmed yet; its receipt confirms it now.
    const fromId=await controller.accountOf(paseo,agent.id,provider,state),from=labelOf(state,fromId);
-   if(!fromId||!from||state.accounts.find(a=>a.id===fromId)?.source==="gateway")return;
+   {const source=state.accounts.find(a=>a.id===fromId);if(!fromId||!from||source&&rpc.isGateway(source))return;}
    // The cache costs no provider request, so an ordinary completed turn ends here.
    if(completed&&!mayBeUsedUp((await controller.usage.list()).find(item=>item.accountId===fromId),Date.now()))return;
    // A full window read earlier still counts until its reset, so the account is read again before deciding.
@@ -239,7 +239,7 @@ export default function contribute(server:PluginServerContext){
    const latest=await controller.store.read();
    if(settled(latest)||boundAccount(latest,agent.id,provider)!==fromId)return;
    const model=snapshot?.agent.runtimeInfo?.model||snapshot?.agent.model||null,now=Date.now();
-   const decision=failoverDecision({currentId:fromId,accounts:latest.accounts.filter(a=>a.provider===provider && a.source!=="gateway"),usage,model,now});
+   const decision=failoverDecision({currentId:fromId,accounts:latest.accounts.filter(a=>a.provider===provider && !rpc.isGateway(a)),usage,model,now});
    if(!decision)return;
    const offer=decision.kind==="offer"?latest.accounts.find(a=>a.id===decision.toId):undefined;
    const row:FailoverRow={rowId,state:offer?"offered":"none",from,fromId,to:offer?.label??null,toId:offer?.id??null,resetsAt:decision.resetsAt,error:null};

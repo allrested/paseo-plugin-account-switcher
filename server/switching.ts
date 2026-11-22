@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { BindingSchema, cliName, type Binding, type Provider, type UsageSnapshot } from "../shared/contracts";
+import { BindingSchema, cliName, isGateway, type Binding, type Provider, type UsageSnapshot } from "../shared/contracts";
 import { defaultBlocker, launchOrder, type Blocker } from "./selection";
 import { AccountStore, accountFrom, type Registry, type StoredBinding } from "./store";
 
@@ -116,10 +116,13 @@ export class SwitchService {
    if(account.provider!==provider)throw new SwitchRefusal("The default account belongs to another provider.");
    if(account.loginToken)throw new SwitchRefusal("Default account sign-in is still in progress.");
    const usage=await this.deps.usage?.().catch(()=>[])??[];
-   const evidence={defaultId:selected,accounts:state.accounts.filter(a=>a.provider===provider && a.source!=="gateway"),preferHeadroom:balance,usage,model,now:Date.now()};
+   const evidence={defaultId:selected,accounts:state.accounts.filter(a=>a.provider===provider && !isGateway(a)),preferHeadroom:balance,usage,model,now:Date.now()};
    let chosen:string|undefined,defaultStatus:string|undefined;
    // With fallback off the default is binding, as before 0.7: the agent starts there or not at all.
-   for(const id of state.fallback[provider]?launchOrder(evidence):[selected]){
+   // A gateway chosen as the default is the user's explicit choice: its reading never moves a new agent elsewhere.
+   // The host gateway standing in because there is no default is not a choice, so balancing still looks at the subscriptions.
+   const pinned=state.defaults[provider]===selected&&isGateway(account);
+   for(const id of state.fallback[provider]&&!pinned?launchOrder(evidence):[selected]){
      const {authStatus}=await this.deps.checkAccount(id);
      if(id===selected)defaultStatus=authStatus;
      if(authStatus==="ready"){chosen=id;break;}

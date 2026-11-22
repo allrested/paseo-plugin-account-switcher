@@ -8,6 +8,14 @@ import { atomicWrite, isMissing } from "./files";
 const AUTH_ENV = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "CLAUDE_SECURESTORAGE_CONFIG_DIR", "ANTHROPIC_PROFILE", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_API_KEY", "CODEX_API_BASE_URL", "OPENAI_ORG_ID", "OPENAI_ORGANIZATION"];
 AUTH_ENV.push("CLAUDE_CODE_OAUTH_REFRESH_TOKEN","CLAUDE_CODE_OAUTH_SCOPES","CLAUDE_CODE_OAUTH_CLIENT_ID","CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR","CLAUDE_CODE_HOST_CREDS_FILE","ANTHROPIC_CUSTOM_HEADERS");
 AUTH_ENV.push("CLAUDE_BG_AUTH_SNAPSHOT_PATH","GATEWAY_TOKEN_FILE_DESCRIPTOR","WEBSOCKET_AUTH_FILE_DESCRIPTOR","SESSION_INGRESS_TOKEN_FILE","ANTHROPIC_UNIX_SOCKET","CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST","CLAUDE_CODE_HOST_AUTH_ENV_VAR");
+// Every other way the CLI can be pointed at a provider, a cloud credential or another sign-in service.
+AUTH_ENV.push("CLAUDE_CODE_USE_GATEWAY","CLAUDE_CODE_USE_MANTLE","CLAUDE_CODE_USE_ANTHROPIC_AWS","CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD","ANTHROPIC_BEDROCK_BASE_URL","ANTHROPIC_BEDROCK_MANTLE_BASE_URL",
+  "ANTHROPIC_VERTEX_BASE_URL","ANTHROPIC_FOUNDRY_BASE_URL","ANTHROPIC_FOUNDRY_API_KEY","ANTHROPIC_FOUNDRY_AUTH_TOKEN","ANTHROPIC_AWS_BASE_URL","ANTHROPIC_AWS_API_KEY","ANTHROPIC_GOOGLE_CLOUD_BASE_URL",
+  "AWS_BEARER_TOKEN_BEDROCK","ANTHROPIC_IDENTITY_TOKEN","ANTHROPIC_IDENTITY_TOKEN_FILE","CLAUDE_CODE_CUSTOM_OAUTH_URL");
+// Top-level settings that do the same.
+const AUTH_SETTINGS = ["apiKeyHelper", "forceLoginMethod", "forceLoginOrgUUID", "forceLoginGatewayUrl", "awsAuthRefresh", "awsCredentialExport"];
+// Model names a gateway's settings choose. They are that gateway's ids and mean nothing to another account.
+const MODEL_ENV = /^(ANTHROPIC_MODEL|ANTHROPIC_DEFAULT_[A-Z0-9_]+_MODEL|ANTHROPIC_SMALL_FAST_MODEL|CLAUDE_CODE_SUBAGENT_MODEL)$/;
 
 export function assertSubscriptionEnvironment(provider: Provider, environment: Record<string, unknown>): void {
   const conflicting = AUTH_ENV.some(key => {
@@ -23,6 +31,22 @@ export function assertSubscriptionEnvironment(provider: Provider, environment: R
   if (conflicting) throw new Error(`${provider === "claude" ? "Claude" : "Codex"} authentication overrides in environment variables are incompatible with subscription accounts. Remove them from the provider settings and daemon environment.`);
 }
 const AUTH_CONFIG_KEYS = /(^|\.)(model_provider|model_providers|chatgpt_base_url|forced_login_method|forced_chatgpt_workspace_id|cli_auth_credentials_store|sqlite_home|codex_home)(\.|$)/;
+/**
+ * The host's settings without what makes its CLI talk to a gateway, a cloud provider or another sign-in: the settings and
+ * `env` keys that select or authenticate one, and, when they point at another endpoint, the model names chosen for it.
+ * A profile prepared for another account must not inherit them.
+ */
+export function stripAuthSettings(settings: Record<string, unknown>): Record<string, unknown> {
+  const { env, ...all } = settings;
+  const rest = Object.fromEntries(Object.entries(all).filter(([key]) => !AUTH_SETTINGS.includes(key)));
+  if (!env || typeof env !== "object" || Array.isArray(env)) return env === undefined ? rest : { ...rest, env };
+  const drop = [...AUTH_ENV, "CLAUDE_CONFIG_DIR", "CODEX_HOME"];
+  // Settings that point at another endpoint also name that endpoint's models.
+  const gateway = Object.keys(env).some(key => /_BASE_URL$/.test(key) && drop.includes(key));
+  if (gateway) delete rest.model;
+  const kept = Object.fromEntries(Object.entries(env).filter(([key]) => !drop.includes(key) && !(gateway && MODEL_ENV.test(key))));
+  return Object.keys(kept).length ? { ...rest, env: kept } : rest;
+}
 export function assertClaudeSettings(settings: Record<string, unknown>) {
   if (settings.apiKeyHelper || Object.keys(settings.env ?? {}).some(key => [...AUTH_ENV,"CLAUDE_CONFIG_DIR","CODEX_HOME"].includes(key))) throw new Error("Claude settings contain authentication overrides.");
 }
@@ -103,8 +127,8 @@ export async function prepareProfile({ provider, home, sourceHome, sourceEnviron
     for (const name of ["skills", "commands", "agents", "plugins", "rules", "CLAUDE.md"]) await linkDirectory(home, sourceHome, name, false);
     const text = await readOptional(join(sourceHome, "settings.json"));
     if (text !== null) {
-      const settings = JSON.parse(text);
-      assertClaudeSettings(settings);
+      // A host set up for a gateway keeps that in these settings. Another account gets them without it.
+      const settings = stripAuthSettings(JSON.parse(text));
       await writeChanged(join(home, "settings.json"), JSON.stringify(settings, null, 2));
     } else await rm(join(home,"settings.json"),{force:true});
     // Claude keeps account metadata in this file too. Copy only user settings,

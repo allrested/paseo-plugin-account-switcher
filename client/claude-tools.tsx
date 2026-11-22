@@ -2,7 +2,7 @@ import { useRpc } from "@getpaseo/plugin/client";
 import { SettingsCard, SettingsSelect, SettingsSwitch } from "@getpaseo/plugin/client/ui";
 import { useState } from "react";
 import { Text, View } from "react-native";
-import { addGateway, importGatewayProvider, listGatewayProviders, listProfiles, linkProfile, moveCandidates, moveIdleAgent, setHeadroom, type AccountState, type GatewayProvider } from "../shared/contracts";
+import { isGateway, addGateway, importGatewayProvider, listGatewayProviders, listProfiles, linkProfile, moveCandidates, moveIdleAgent, setHeadroom, type AccountState, type GatewayProvider } from "../shared/contracts";
 import type { AccountsProps } from "./accounts";
 import { Button, Field, muted, Notice, row } from "./components";
 import { useAction } from "./data";
@@ -21,9 +21,11 @@ export function ClaudeTools({ theme, state, host, onChanged }: AccountsProps & {
   const [from, setFrom] = useState("system-claude"), [to, setTo] = useState("");
   const [results, setResults] = useState<string[]>([]);
   const action = useAction(host.id, onChanged), busy = action.isPending;
-  const subscriptions = state.accounts.filter(a => a.provider === "claude" && a.source !== "gateway");
+  const subscriptions = state.accounts.filter(a => a.provider === "claude" && !isGateway(a));
   const options = subscriptions.map(a => ({ value: a.id, label: a.label }));
-  const destinations = options.filter(option => option.value !== from && subscriptions.some(a => a.id === option.value && a.authStatus === "ready"));
+  // On a host whose own account is a gateway, "system-claude" is not a subscription; the first one stands in.
+  const source = options.some(option => option.value === from) ? from : options[0]?.value ?? from;
+  const destinations = options.filter(option => option.value !== source && subscriptions.some(a => a.id === option.value && a.authStatus === "ready"));
   const destination = destinations.find(option => option.value === to)?.value ?? destinations[0]?.value;
   function closeForm() { setToken(""); setMode(null); }
   return <SettingsCard>
@@ -54,16 +56,16 @@ export function ClaudeTools({ theme, state, host, onChanged }: AccountsProps & {
         })}>Save gateway</Button><Button theme={theme} disabled={busy} onPress={closeForm}>Cancel</Button></View>
       </> : null}
       {mode === "move" ? <>
-        <SettingsSelect label="From subscription" value={from} options={options} disabled={busy} onValueChange={setFrom} />
+        <SettingsSelect label="From subscription" value={source} options={options} disabled={busy} onValueChange={setFrom} />
         {destination ? <SettingsSelect label="To subscription" value={destination} options={destinations} disabled={busy} onValueChange={setTo} />
           : <Text style={muted(theme)}>Verify another subscription before moving agents.</Text>}
         <Button theme={theme} disabled={busy || !destination} onPress={() => action.run(async () => {
           if (!destination) return;
           setResults([]);
-          const ids = await candidates({ accountId: from });
+          const ids = await candidates({ accountId: source });
           if (!ids.length) setResults(["No agents on this subscription."]);
           for (const agentId of ids) {
-            try { const result = await move({ agentId, from, to: destination }); setResults(prev => [...prev, agentId + " · " + result.detail]); }
+            try { const result = await move({ agentId, from: source, to: destination }); setResults(prev => [...prev, agentId + " · " + result.detail]); }
             catch { setResults(prev => [...prev, agentId + " · Outcome unconfirmed. Check the agent before retrying."]); }
           }
         })}>{busy ? "Working…" : "Move idle agents now"}</Button>
