@@ -26,6 +26,15 @@ function elements(node:unknown):Node[]{
   const element=node as Node;return [element,...elements(element.props.children)];
 }
 function button(tree:unknown,label:string){return elements(tree).find(e=>e.type===Button&&(e.props.label===label||e.props.children===label))!;}
+// Like `elements`, but also renders the plugin's own function components, whose text is otherwise unseen.
+function deep(node:unknown):Node[]{
+  if(Array.isArray(node))return node.flatMap(deep);
+  if(!node||typeof node!=="object"||!("props" in node))return [];
+  const element=node as Node;
+  if(typeof element.type==="function")return deep((element.type as (props:unknown)=>unknown)(element.props));
+  return [element,...deep(element.props.children)];
+}
+function deepText(tree:unknown){return deep(tree).flatMap(e=>[e.props.children].flat()).filter(c=>typeof c==="string"||typeof c==="number").join(" ");}
 function text(tree:unknown){return elements(tree).flatMap(e=>[e.props.children].flat()).filter(c=>typeof c==="string").join(" ");}
 const account:Account={id:"work",provider:"claude",source:"managed",label:"Work",email:null,plan:null,authStatus:"ready",createdAt:"2026-11-06",login:null};
 function mount(compact=false,source:Account["source"]="managed"){
@@ -71,4 +80,18 @@ describe("account actions",()=>{
     expect(text(render())).toContain("Sign-in confirmed.");
     expect(text(render())).not.toContain("Finish signing in in your browser");
   });
+  it("shows a gateway's reading only when it has a usage reader",()=>{
+    const usage={kind:"file" as const,path:"/data/report.json"};
+    const snapshot={accountId:"work",provider:"claude" as const,status:"ok" as const,plan:"Team",windows:[],balances:[{id:"balance",label:"Credits",used:588,remaining:412,limit:1000,unit:"credits" as const,detail:null}],fetchedAt:"2026-11-22T00:00:00.000Z",checkedAt:"2026-11-22T00:00:00.000Z",nextRetryAt:null,error:null};
+    const plain=mount(false,"gateway");
+    Object.assign(plain.props,{snapshot});
+    expect(deepText(plain.render())).not.toContain("credits left");
+    const read=mount(false,"gateway");
+    Object.assign(read.props,{snapshot,account:{...read.props.account,usage}});
+    expect(deepText(read.render())).toContain("Credits");
+    expect(deepText(read.render())).toContain("412 of 1,000 credits left");
+    Object.assign(read.props,{snapshot:{...snapshot,status:"unavailable",balances:[],error:"The usage file is missing."}});
+    expect(deepText(read.render())).toContain("The usage file is missing.");
+  });
 });
+

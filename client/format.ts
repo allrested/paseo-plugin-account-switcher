@@ -1,4 +1,4 @@
-import type { Account, AccountState, Provider, UsageSnapshot, UsageWindow } from "../shared/contracts";
+import type { Account, AccountState, Provider, UsageBalance, UsageSnapshot, UsageWindow } from "../shared/contracts";
 
 export const providerName: Record<Provider, string> = { claude: "Claude", codex: "Codex · ChatGPT" };
 
@@ -167,4 +167,26 @@ export const TOUCH_TARGET = 44;
 export function targetSlop(boxHeight: number, horizontal = 4): { top: number; bottom: number; left: number; right: number } {
   const vertical = Math.max(0, Math.ceil((TOUCH_TARGET - boxHeight) / 2));
   return { top: vertical, bottom: vertical, left: horizontal, right: horizontal };
+}
+
+function amount(value: number, unit: UsageBalance["unit"]): string {
+  return unit === "usd" ? `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : value.toLocaleString("en-US", { maximumFractionDigits: 2 });
+}
+/** A gateway's amount in words: "412 of 1,000 credits left", "$38.20 used". */
+export function formatBalance(balance: UsageBalance): string {
+  const { used, remaining, limit, unit } = balance;
+  const name = unit === "usd" ? "" : ` ${unit}`;
+  const base = remaining !== null && limit !== null ? `${amount(remaining, unit)} of ${amount(limit, unit)}${name} left`
+    : remaining !== null ? `${amount(remaining, unit)}${name} left`
+    : used !== null ? `${amount(used, unit)}${name} used`
+    : limit !== null ? `${amount(limit, unit)}${name} limit` : null;
+  return base ? (balance.detail ? `${base} · ${balance.detail}` : base) : balance.detail ?? "no data";
+}
+/** Percent used, only when the gateway reports a real limit. */
+export function balancePercent(balance: UsageBalance): number | null {
+  const { used, remaining, limit } = balance;
+  if (limit === null || !(limit > 0)) return null;
+  const value = used !== null ? used / limit * 100 : remaining !== null ? (limit - remaining) / limit * 100 : null;
+  return value === null ? null : Math.round(value * 100) / 100;
 }

@@ -2,8 +2,8 @@ import type { PluginTheme } from "@getpaseo/plugin";
 import { Icon } from "@getpaseo/plugin/client/react-native";
 import { useState, type ReactNode } from "react";
 import { Pressable, Text, TextInput, View, type TextInputProps, type TextStyle, type ViewStyle } from "react-native";
-import type { UsageSnapshot, UsageWindow } from "../shared/contracts";
-import { freshness, localDate, percent, quotaTone, remainingPercent, shortCountdown, splitWindows, targetSlop, windowIsExpired, windowLength, type Tone } from "./format";
+import type { UsageBalance, UsageSnapshot, UsageWindow } from "../shared/contracts";
+import { balancePercent, formatBalance, freshness, localDate, percent, quotaTone, remainingPercent, shortCountdown, splitWindows, targetSlop, windowIsExpired, windowLength, type Tone } from "./format";
 
 export type ThemeProps = { theme: PluginTheme };
 export const row: ViewStyle = { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 };
@@ -128,6 +128,19 @@ export function QuotaWindowRow({ theme, quota, now }: ThemeProps & { quota: Usag
   </View>;
 }
 
+/** One amount on one line: label · what is used or left, with a meter only when the gateway reports a limit. */
+export function QuotaBalanceRow({ theme, balance }: ThemeProps & { balance: UsageBalance }) {
+  const used = balancePercent(balance);
+  const text = formatBalance(balance);
+  return <View accessibilityLabel={`${balance.label}: ${text}`} style={{ gap: 3 }}>
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+      <Text numberOfLines={1} style={{ ...body(theme), flexShrink: 1, minWidth: 56 }}>{balance.label}</Text>
+      <Text style={{ ...muted(theme), ...tabular, color: used === null ? theme.colors.foregroundMuted : toneColor(theme, quotaTone(used)), fontWeight: "600", marginLeft: "auto" }}>{text}</Text>
+    </View>
+    {used === null ? null : <Meter theme={theme} used={used} />}
+  </View>;
+}
+
 function DetailLine({ theme, children }: ThemeProps & { children: ReactNode }) {
   return <Text selectable style={{ ...muted(theme), ...tabular }}>{children}</Text>;
 }
@@ -142,6 +155,7 @@ export function QuotaSummary({ theme, snapshot, now, compact, onRefresh, refresh
   const [open, setOpen] = useState(false);
   if (hideAuth && snapshot?.status === "needs_auth") return null;
   const { known, unknown } = snapshot ? splitWindows(snapshot.windows) : { known: [], unknown: [] };
+  const balances = snapshot?.balances ?? [];
   const fresh = freshness(snapshot, now);
   const detailsTitle = unknown.length ? `${unknown.length} more without data · details` : "Details";
   return <View style={{ gap: 8 }}>
@@ -149,7 +163,12 @@ export function QuotaSummary({ theme, snapshot, now, compact, onRefresh, refresh
       {known.map((quota) => <View key={quota.id} style={{ flexGrow: 1, flexBasis: compact ? "100%" : "46%", minWidth: 0 }}>
         <QuotaWindowRow theme={theme} quota={quota} now={now} />
       </View>)}
-    </View> : snapshot && snapshot.status !== "needs_auth" && !snapshot.error ? <Text style={muted(theme)}>{snapshot.windows.length ? "No limit values reported." : "No limit data yet."}</Text> : null}
+    </View> : snapshot && snapshot.status !== "needs_auth" && !snapshot.error && !balances.length ? <Text style={muted(theme)}>{snapshot.windows.length ? "No limit values reported." : "No limit data yet."}</Text> : null}
+    {balances.length ? <View style={{ flexDirection: "row", flexWrap: "wrap", gap: compact ? 8 : 10 }}>
+      {balances.map((balance) => <View key={balance.id} style={{ flexGrow: 1, flexBasis: compact ? "100%" : "46%", minWidth: 0 }}>
+        <QuotaBalanceRow theme={theme} balance={balance} />
+      </View>)}
+    </View> : null}
     {snapshot?.error ? <Notice theme={theme} tone="danger">{snapshot.error}</Notice> : null}
     <View style={{ ...row, gap: 10 }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
