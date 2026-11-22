@@ -151,3 +151,37 @@ export async function testGatewayUsage(store: AccountStore, accountId: string, u
     return { ok: false, plan: null, windows: partial?.windows ?? [], balances: partial?.balances ?? [], error: error instanceof GatewayUsageError ? error.message : "The gateway's usage could not be read.", ...(partial?.lines ? { lines: partial.lines } : {}) };
   }
 }
+
+type GatewayProvider = { provider: string; label: string; baseUrl: string; token: string };
+/**
+ * Paseo's own custom Claude providers that are really gateways: an entry of `agents.providers` in Paseo's config.json
+ * that extends `claude` and carries a base URL and a bearer token in its `env`. Read only; the config is never changed.
+ */
+async function gatewayProviders(configPath: string): Promise<GatewayProvider[]> {
+  let providers: unknown;
+  try { providers = JSON.parse(await readFile(configPath, "utf8"))?.agents?.providers; } catch { return []; }
+  if (!providers || typeof providers !== "object") return [];
+  const found: GatewayProvider[] = [];
+  for (const [provider, entry] of Object.entries(providers as Record<string, { extends?: unknown; label?: unknown; env?: Record<string, unknown> } | null>)) {
+    if (!entry || typeof entry !== "object" || (provider !== "claude" && entry.extends !== "claude")) continue;
+    const url = entry.env?.ANTHROPIC_BASE_URL, token = entry.env?.ANTHROPIC_AUTH_TOKEN;
+    if (typeof url !== "string" || typeof token !== "string") continue;
+    const label = typeof entry.label === "string" && entry.label.trim() ? entry.label : provider;
+    const parsed = GatewayInput.safeParse({ label: label.slice(0, 80), base_url: url.trim().replace(/\/+$/, ""), api_token: token });
+    if (parsed.success) found.push({ provider, label: parsed.data.label, baseUrl: parsed.data.base_url, token: parsed.data.api_token });
+  }
+  return found;
+}
+const sameGateway = (state: { accounts: StoredAccount[] }, baseUrl: string) => state.accounts.some(a => a.source === "gateway" && a.baseUrl?.replace(/\/+$/, "") === baseUrl);
+/** The providers that can be imported: those whose gateway is not in Accounts yet. No token leaves this function. */
+export async function discoverGatewayProviders(store: AccountStore, configPath: string) {
+  const state = await store.read();
+  return (await gatewayProviders(configPath)).filter(p => !sameGateway(state, p.baseUrl)).map(({ provider, label, baseUrl }) => ({ provider, label, baseUrl }));
+}
+/** Adds a gateway with the base URL and token of one of Paseo's custom providers. The provider entry stays as it is. */
+export async function importGatewayProvider(store: AccountStore, configPath: string, provider: string) {
+  const found = (await gatewayProviders(configPath)).find(p => p.provider === provider);
+  if (!found) throw new Error("This provider has no gateway to import.");
+  if (sameGateway(await store.read(), found.baseUrl)) throw new Error("This gateway is already in Accounts.");
+  return addGateway(store, { label: found.label, base_url: found.baseUrl, api_token: found.token });
+}

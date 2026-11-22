@@ -6,7 +6,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createServer } from "node:http";
 import { AccountStore } from "../server/store";
-import { addGateway, discoverProfiles, gatewayArguments, linkProfile, rotateGateway, gatewayEnvironment, setGatewayUsage, testGatewayUsage } from "../server/claude-profiles";
+import { addGateway, discoverProfiles, gatewayArguments, linkProfile, rotateGateway, gatewayEnvironment, setGatewayUsage, testGatewayUsage, discoverGatewayProviders, importGatewayProvider } from "../server/claude-profiles";
 import { launcherPath, writeLaunchers } from "../server/integration";
 import { accountEnvironment } from "../server/auth";
 import { AccountController } from "../server/controller";
@@ -136,4 +136,33 @@ it("tests a usage dashboard through the browser seam, returning the page text an
   const partial=await testGatewayUsage(store,gateway.id,{...usage,readings:[...usage.readings,{label:"Gone",find:"NOT THERE",type:"percent" as const}]},{openTab,sleep:async()=>{}});
   expect(partial).toMatchObject({ok:false,error:"No line 'NOT THERE' on the page.",balances:[{used:38.2}],lines:[["Usage","EST. COST","$38.20"]]});
   expect(JSON.stringify([found,partial])).not.toContain("only-a-test-bearer");
+});
+it("offers Paseo's custom Claude providers as gateways and imports one without showing its token",async()=>{
+  const {home,store}=await fixture(), token="only-a-test-bearer";
+  const config=join(home,"config.json");
+  await writeFile(config,JSON.stringify({agents:{providers:{
+    "claude-api":{extends:"claude",label:"Claude (Proxy)",env:{ANTHROPIC_BASE_URL:"https://proxy.example/",ANTHROPIC_AUTH_TOKEN:token,ANTHROPIC_DEFAULT_OPUS_MODEL:"x",CLAUDE_CONFIG_DIR:"/home/u/.claude-api"}},
+    "claude-work":{extends:"claude",env:{CLAUDE_CONFIG_DIR:"/home/u/.claude-work"}},
+    "claude-key":{extends:"claude",env:{ANTHROPIC_BASE_URL:"https://key.example",ANTHROPIC_API_KEY:"x-api-key-only"}},
+    "claude-http":{extends:"claude",env:{ANTHROPIC_BASE_URL:"http://insecure.example",ANTHROPIC_AUTH_TOKEN:"t"}},
+    "other":{extends:"acp",env:{ANTHROPIC_BASE_URL:"https://acp.example",ANTHROPIC_AUTH_TOKEN:"t"}},
+    codex:{},
+  }}}));
+  await store.change(s=>{s.available.claude=true;});
+  const offered=await discoverGatewayProviders(store,config);
+  expect(offered).toEqual([{provider:"claude-api",label:"Claude (Proxy)",baseUrl:"https://proxy.example"}]);
+  expect(JSON.stringify(offered)).not.toContain(token);
+  await expect(importGatewayProvider(store,config,"claude-work")).rejects.toThrow("This provider has no gateway to import.");
+  await expect(importGatewayProvider(store,config,"missing")).rejects.toThrow("This provider has no gateway to import.");
+  const account=await importGatewayProvider(store,config,"claude-api");
+  expect(account).toMatchObject({source:"gateway",label:"Claude (Proxy)",baseUrl:"https://proxy.example",authStatus:"ready"});
+  expect(JSON.stringify(account)).not.toContain(token);
+  const saved=(await store.read()).accounts.find(a=>a.id===account.id)!;
+  expect((await gatewayEnvironment(store.root,saved)).ANTHROPIC_AUTH_TOKEN).toBe(token);
+  expect(await discoverGatewayProviders(store,config)).toEqual([]);
+  await expect(importGatewayProvider(store,config,"claude-api")).rejects.toThrow("This gateway is already in Accounts.");
+  expect(JSON.parse(await readFile(config,"utf8")).agents.providers["claude-api"].env.ANTHROPIC_AUTH_TOKEN).toBe(token);
+  expect(await discoverGatewayProviders(store,join(home,"none.json"))).toEqual([]);
+  await writeFile(config,"not json");
+  expect(await discoverGatewayProviders(store,config)).toEqual([]);
 });
