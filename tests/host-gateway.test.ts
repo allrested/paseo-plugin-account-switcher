@@ -113,3 +113,24 @@ it("describes the host gateway on its card", () => {
   expect(accountStatus(account, undefined)).toEqual({ text: "Gateway from Claude settings", tone: "muted" });
   expect(accountStatus({ ...account, baseUrl: undefined }, undefined).text).toBe("sign-in confirmed");
 });
+
+it("strips every provider selector, cloud credential and forced sign-in from copied settings", () => {
+  const env = Object.fromEntries(["CLAUDE_CODE_USE_GATEWAY", "CLAUDE_CODE_USE_MANTLE", "CLAUDE_CODE_USE_ANTHROPIC_AWS", "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
+    "ANTHROPIC_BEDROCK_BASE_URL", "ANTHROPIC_BEDROCK_MANTLE_BASE_URL", "ANTHROPIC_VERTEX_BASE_URL", "ANTHROPIC_FOUNDRY_BASE_URL", "ANTHROPIC_FOUNDRY_API_KEY", "ANTHROPIC_FOUNDRY_AUTH_TOKEN",
+    "ANTHROPIC_AWS_BASE_URL", "ANTHROPIC_AWS_API_KEY", "ANTHROPIC_GOOGLE_CLOUD_BASE_URL", "AWS_BEARER_TOKEN_BEDROCK", "ANTHROPIC_IDENTITY_TOKEN", "ANTHROPIC_IDENTITY_TOKEN_FILE", "CLAUDE_CODE_CUSTOM_OAUTH_URL"].map(key => [key, "x"]));
+  expect(stripAuthSettings({ env: { ...env, KEEP: "1" }, forceLoginMethod: "console", forceLoginOrgUUID: "o", forceLoginGatewayUrl: "u", awsAuthRefresh: "a", awsCredentialExport: "b", theme: "dark" }))
+    .toEqual({ env: { KEEP: "1" }, theme: "dark" });
+});
+it("leaves the gateway's model names behind too, but keeps a plain host's model choice", () => {
+  const models = { ANTHROPIC_MODEL: "gw-model", ANTHROPIC_DEFAULT_OPUS_MODEL: "a", ANTHROPIC_DEFAULT_SONNET_MODEL: "b", ANTHROPIC_DEFAULT_HAIKU_MODEL: "c", ANTHROPIC_SMALL_FAST_MODEL: "d", CLAUDE_CODE_SUBAGENT_MODEL: "e" };
+  expect(stripAuthSettings({ model: "gw-model", env: { ANTHROPIC_BASE_URL: "https://proxy.example", ANTHROPIC_AUTH_TOKEN: "t", ...models, KEEP: "1" } })).toEqual({ env: { KEEP: "1" } });
+  expect(stripAuthSettings({ model: "opus", env: { ...models, KEEP: "1" } })).toEqual({ model: "opus", env: { ...models, KEEP: "1" } });
+});
+it("moves on from a reconcile by bumping the account's generation, so a probe still in flight cannot write over it", async () => {
+  const { store, system } = await host(proxy());
+  const before = (await system()).generation;
+  await reconcileHostGateway(store);
+  expect((await system()).generation).toBe(before + 1);
+  await reconcileHostGateway(store);
+  expect((await system()).generation).toBe(before + 1);
+});

@@ -236,7 +236,11 @@ describe("a new agent's account when the default would fail",()=>{
   const reading=(accountId:string,usedPercent:number)=>({...snapshot(accountId,usedPercent),provider:"claude" as const});
   const service=makeService(store,{usage:async()=>[reading("system-claude",100),reading(sub.id,10)]});
   await expect(service.bindNewAgent("on-gateway","claude")).resolves.toMatchObject({accountId:"system-claude",reason:null});
-  await store.change(r=>{r.defaults.claude=sub.id;});
+  // With no default, "prefer the most available subscription" still chooses a subscription: the host gateway is only the last resort.
+  await store.change(r=>{r.defaults.claude=null;r.preferHeadroom=true;});
+  const balancing=makeService(store,{usage:async()=>[reading(sub.id,10)]});
+  await expect(balancing.bindNewAgent("balanced","claude")).resolves.toMatchObject({accountId:sub.id});
+  await store.change(r=>{r.defaults.claude=sub.id;r.preferHeadroom=false;});
   const full=makeService(store,{usage:async()=>[reading("system-claude",0),reading(sub.id,100)]});
   await expect(full.bindNewAgent("sub-full","claude")).resolves.toMatchObject({accountId:sub.id});
  });

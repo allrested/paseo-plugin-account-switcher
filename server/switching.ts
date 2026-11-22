@@ -120,7 +120,9 @@ export class SwitchService {
    let chosen:string|undefined,defaultStatus:string|undefined;
    // With fallback off the default is binding, as before 0.7: the agent starts there or not at all.
    // A gateway chosen as the default is the user's explicit choice: its reading never moves a new agent elsewhere.
-   for(const id of state.fallback[provider]&&!isGateway(account)?launchOrder(evidence):[selected]){
+   // The host gateway standing in because there is no default is not a choice, so balancing still looks at the subscriptions.
+   const pinned=state.defaults[provider]===selected&&isGateway(account);
+   for(const id of state.fallback[provider]&&!pinned?launchOrder(evidence):[selected]){
      const {authStatus}=await this.deps.checkAccount(id);
      if(id===selected)defaultStatus=authStatus;
      if(authStatus==="ready"){chosen=id;break;}

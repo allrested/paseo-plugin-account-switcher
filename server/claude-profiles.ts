@@ -161,6 +161,8 @@ export async function reconcileHostGateway(store: AccountStore): Promise<void> {
     if (!target) return;
     if (found) Object.assign(target, { baseUrl: found.baseUrl, authStatus: "ready", email: null, plan: null, identityKey: null });
     else { delete target.baseUrl; target.authStatus = "unknown"; }
+    // A sign-in probe that started before this belongs to the account as it was; the new generation makes its result void.
+    target.generation++;
   });
 }
 /** What a usage endpoint is asked with: an added gateway's stored token, or the host gateway's token from its settings. */

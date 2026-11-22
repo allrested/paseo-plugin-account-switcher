@@ -1,4 +1,4 @@
-import type { Account, AccountState, Provider, UsageSnapshot } from "../shared/contracts";
+import { isGateway, type Account, type AccountState, type Provider, type UsageSnapshot } from "../shared/contracts";
 import { agentModel, currentAccount, idleForSwitch, switchRisk } from "./format";
 import { accountAvailable } from "./login";
 
@@ -58,7 +58,7 @@ export async function runAccountCommand(provider: Provider | null, agentId: stri
   await deps.prepare(target.account.id);
   const [agent, usage] = await Promise.all([deps.agent(), deps.usage().catch(() => [])]);
   const risk = switchRisk({ label: target.account.label, models: usage.find((item) => item.accountId === target.account.id)?.models }, agentModel(agent));
-  if (target.account.source === "gateway" || risk || !idleForSwitch(agent)) { deps.openSwitcher(); return "pending"; }
+  if (isGateway(target.account) || risk || !idleForSwitch(agent)) { deps.openSwitcher(); return "pending"; }
   await deps.apply(target.account.id);
   return "applied";
 }
