@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, readdir, realpath, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { AccountSchema, GatewayInput, GatewayUsageSchema, isGateway, isHostGateway, type GatewayUsage } from "../shared/contracts";
+import { AccountSchema, GatewayInput, GatewayUsageProbeSchema, GatewayUsageSchema, isGateway, isHostGateway, type GatewayUsage } from "../shared/contracts";
 import { GatewayUsageError, readGatewayUsage, type GatewayDependencies } from "./usage/gateway";
 import { DashboardMissingError, type DashboardReading } from "./usage/dashboard";
 import { atomicWrite, isMissing } from "./files";
@@ -182,7 +182,7 @@ export async function setGatewayUsage(store: AccountStore, accountId: string, us
 }
 /** Runs a reader once without saving it, so the form can show what it finds. The result carries amounts and labels only. */
 export async function testGatewayUsage(store: AccountStore, accountId: string, usage: GatewayUsage, deps: GatewayDependencies = {}) {
-  const parsed = GatewayUsageSchema.parse(usage);
+  const parsed = GatewayUsageProbeSchema.parse(usage);
   const account = gatewayFrom(await store.read(), accountId);
   try {
     // A test is the user asking now: it is not held back by the once-a-minute spacing of dashboard reads.

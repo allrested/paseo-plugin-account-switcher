@@ -24,7 +24,7 @@ export function GatewayUsageForm({ theme, account, host: paseoHost, onChanged, o
   const [focused, setFocused] = useState(0);
   const [result, setResult] = useState<GatewayUsageTest | null>(null);
   const action = useAction(paseoHost.id, onChanged), busy = action.isPending;
-  const built = usageFromForm(form, account.baseUrl);
+  const built = usageFromForm(form, account.baseUrl), probe = usageFromForm(form, account.baseUrl, "test");
   const change = (patch: Partial<UsageForm>) => { setResult(null); setForm(current => ({ ...current, ...patch })); };
   const bddev = <Button theme={theme} disabled={busy} onPress={() => { setResult(null); setForm(current => bddevForm(current)); }}>Fill in for BDDev</Button>;
   const suggestBddev = host(account.baseUrl) === BDDEV_HOST;
@@ -92,7 +92,7 @@ export function GatewayUsageForm({ theme, account, host: paseoHost, onChanged, o
     {!built.ok ? <Notice theme={theme} tone="warning">{built.error}</Notice> : null}
     {result ? <View style={{ gap: 6 }}>
       {result.error ? <Notice theme={theme} tone="danger">{result.error}</Notice> : null}
-      {result.ok && !result.windows.length && !result.balances.length ? <Notice theme={theme}>The reading is empty.</Notice> : null}
+      {result.ok && !result.windows.length && !result.balances.length && !result.lines?.length ? <Notice theme={theme}>The reading is empty.</Notice> : null}
       {result.plan ? <Text style={muted(theme)}>{result.plan}</Text> : null}
       {result.windows.map(window => <Text key={window.id} style={body(theme)}>{`${window.label}: ${percent(window.usedPercent)} used`}</Text>)}
       {result.balances.map(balance => <QuotaBalanceRow key={balance.id} theme={theme} balance={balance} />)}
@@ -109,8 +109,8 @@ export function GatewayUsageForm({ theme, account, host: paseoHost, onChanged, o
     </View> : null}
     {action.error ? <Notice theme={theme} tone="danger">{errorMessage(action.error)}</Notice> : null}
     <View style={row}>
-      {form.kind === "off" ? null : <Button theme={theme} disabled={busy || !built.ok} onPress={() => action.run(async () => {
-        if (built.ok && built.usage) setResult(await test({ accountId: account.id, usage: built.usage }));
+      {form.kind === "off" ? null : <Button theme={theme} disabled={busy || !probe.ok} onPress={() => action.run(async () => {
+        if (probe.ok && probe.usage) setResult(await test({ accountId: account.id, usage: probe.usage }));
       })}>Test</Button>}
       <Button theme={theme} variant="primary" disabled={busy || !built.ok} onPress={() => action.run(async () => {
         if (!built.ok) return;

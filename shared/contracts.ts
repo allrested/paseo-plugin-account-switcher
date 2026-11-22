@@ -25,15 +25,7 @@ const DashboardPage = z.string().max(2048).refine(value => {
   try { const url = new URL(value); return url.protocol === "https:" && !url.username && !url.password && !/[\s\\]/.test(value); } catch { return false; }
 }, "Use an https address without credentials.");
 /** How a gateway's usage is read. `endpoint` asks the gateway's own origin with its token; `file` reads what another tool wrote; `dashboard` reads a signed-in page through the shared browser. */
-export const GatewayUsageSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("endpoint"),
-    path: z.string().max(512).regex(/^\/(?!\/)[^\s\\#]*$/, "Use a path on the gateway, starting with /."),
-    fields: UsageFields, unit: UsageUnitSchema, divisor: z.number().positive().finite().default(1),
-    label: z.string().trim().min(1).max(40).default("Balance"),
-  }),
-  z.object({ kind: z.literal("file"), path: z.string().max(1024).regex(/^\/[^\0]*$/, "Use an absolute path.") }),
-  z.object({
+const dashboardUsage = (minReadings: number) => z.object({
     kind: z.literal("dashboard"),
     // The shared browser's remote-debugging address. The reader opens a tab there; it never types.
     browser: z.object({
@@ -46,9 +38,20 @@ export const GatewayUsageSchema = z.discriminatedUnion("kind", [
     readings: z.array(z.object({
       label: z.string().trim().min(1).max(40), find: z.string().trim().min(1).max(120), type: z.enum(["percent", "amount"]),
       unit: UsageUnitSchema.optional(), page: z.number().int().min(0).max(3).optional(),
-    }).refine(r => r.type !== "amount" || Boolean(r.unit), "Choose a unit for an amount.")).min(1).max(12),
-  }).refine(d => d.readings.every(r => (r.page ?? 0) < d.pages.length), "A reading names a page that is not listed."),
+    }).refine(r => r.type !== "amount" || Boolean(r.unit), "Choose a unit for an amount.")).min(minReadings).max(12),
+  }).refine(d => d.readings.every(r => (r.page ?? 0) < d.pages.length), "A reading names a page that is not listed.");
+export const GatewayUsageSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("endpoint"),
+    path: z.string().max(512).regex(/^\/(?!\/)[^\s\\#]*$/, "Use a path on the gateway, starting with /."),
+    fields: UsageFields, unit: UsageUnitSchema, divisor: z.number().positive().finite().default(1),
+    label: z.string().trim().min(1).max(40).default("Balance"),
+  }),
+  z.object({ kind: z.literal("file"), path: z.string().max(1024).regex(/^\/[^\0]*$/, "Use an absolute path.") }),
+  dashboardUsage(1),
 ]);
+/** What the form's Test accepts: the same, except that a dashboard may have no readings yet. Test then only fetches the page text to pick captions from. */
+export const GatewayUsageProbeSchema = z.discriminatedUnion("kind", [GatewayUsageSchema.options[0], GatewayUsageSchema.options[1], dashboardUsage(0)]);
 export type GatewayUsage = z.infer<typeof GatewayUsageSchema>;
 export const BDDEV_HOST = "api.bddevlab.online";
 export const BDDEV_USAGE: GatewayUsage = {
@@ -135,7 +138,7 @@ export const rotateGateway = defineRpc({ name: "claude.gateway-rotate", input: A
 export const setGatewayUsage = defineRpc({ name: "claude.gateway-usage-set", input: AccountId.extend({ usage: GatewayUsageSchema.nullable() }), output: Empty });
 export const GatewayUsageTestSchema = z.object({ ok: z.boolean(), plan: z.string().nullable(), windows: z.array(UsageWindowSchema), balances: z.array(UsageBalanceSchema), error: z.string().nullable() , lines: z.array(z.array(z.string())).optional() });
 export type GatewayUsageTest = z.infer<typeof GatewayUsageTestSchema>;
-export const testGatewayUsage = defineRpc({ name: "claude.gateway-usage-test", input: AccountId.extend({ usage: GatewayUsageSchema }), output: GatewayUsageTestSchema });
+export const testGatewayUsage = defineRpc({ name: "claude.gateway-usage-test", input: AccountId.extend({ usage: GatewayUsageProbeSchema }), output: GatewayUsageTestSchema });
 export const GatewayProviderSchema = z.object({ provider: z.string(), label: z.string(), baseUrl: z.string() });
 export type GatewayProvider = z.infer<typeof GatewayProviderSchema>;
 export const listGatewayProviders = defineRpc({ name: "claude.gateway-providers", input: Empty, output: z.array(GatewayProviderSchema) });

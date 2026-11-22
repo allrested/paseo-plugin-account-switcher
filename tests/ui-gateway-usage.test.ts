@@ -173,5 +173,37 @@ describe("usage dashboard form",()=>{
     expect(usageFromForm({...form,pages:["http://gw.example/dashboard"]},"https://gw.example").ok).toBe(false);
     expect(usageFromForm({...form,readings:[{label:"A",find:"",type:"percent",unit:"credits",page:0}]},"https://gw.example").ok).toBe(false);
   });
+  it("tests a dashboard before any caption is known, to fetch the page text to pick from",async()=>{
+    const {render}=mount();
+    choice(render(),"Usage").props.onChange!("dashboard");
+    field(render(),"Browser host").props.onChangeText!("browser.example");
+    field(render(),"Page 1 address").props.onChangeText!("https://gw.example/dashboard");
+    expect(button(render(),"Test").props.disabled).toBe(false);
+    expect(button(render(),"Save").props.disabled).toBe(true);
+    expect(text(render())).toContain("Enter a caption for reading 1. Press Test to see the page text and pick one.");
+    expect(text(render())).not.toMatch(/Too small|expected string/);
+    fixture.rpc.mockResolvedValueOnce({ok:true,plan:null,windows:[],balances:[],error:null,lines:[["Account limits","Weekly · all models","99%"]]});
+    button(render(),"Test").props.onPress!();
+    await Promise.all(fixture.runs);
+    expect(fixture.rpc).toHaveBeenLastCalledWith("claude.gateway-usage-test",{accountId:"gw",usage:{kind:"dashboard",browser:{host:"browser.example",port:9222},pages:["https://gw.example/dashboard"],readings:[]}});
+    expect(text(render())).toContain("Weekly · all models");
+    expect(text(render())).not.toContain("The reading is empty.");
+    elements(render()).find(e=>e.props.accessibilityLabel==="Use line: Weekly · all models")!.props.onPress!();
+    expect(field(render(),"Reading 1 caption").props.value).toBe("Weekly · all models");
+    expect(button(render(),"Save").props.disabled).toBe(false);
+    button(render(),"Save").props.onPress!();
+    await Promise.all(fixture.runs);
+    expect(fixture.rpc).toHaveBeenLastCalledWith("claude.gateway-usage-set",{accountId:"gw",usage:{kind:"dashboard",browser:{host:"browser.example",port:9222},pages:["https://gw.example/dashboard"],
+      readings:[{label:"Weekly · all models",find:"Weekly · all models",type:"percent"}]}});
+  });
+  it("says what is missing in plain words",()=>{
+    const form=formFromUsage(saved);
+    expect(usageFromForm({...form,browserHost:""},"https://gw.example")).toEqual({ok:false,error:"Enter the browser’s host name or IP address."});
+    expect(usageFromForm({...form,browserPort:"0"},"https://gw.example")).toEqual({ok:false,error:"Enter the browser’s port, a number from 1 to 65535."});
+    expect(usageFromForm({...form,pages:["https://gw.example/dashboard","gw.example/users"]},"https://gw.example")).toEqual({ok:false,error:"Page 2 needs an https address."});
+    expect(usageFromForm({...form,readings:[form.readings[0],{...form.readings[1],find:" "}]},"https://gw.example")).toEqual({ok:false,error:"Enter a caption for reading 2. Press Test to see the page text and pick one."});
+    expect(usageFromForm({...form,readings:[form.readings[0],{...form.readings[1],find:" "}]},"https://gw.example","test")).toMatchObject({ok:true,usage:{readings:[{find:"Weekly · all models"}]}});
+    expect(usageFromForm({...form,readings:[{...form.readings[0],label:""}]},"https://gw.example")).toMatchObject({ok:true,usage:{readings:[{label:"Weekly · all models"}]}});
+    expect(usageFromForm({...form,readings:[{...form.readings[0],label:"",find:"x".repeat(60)}]},"https://gw.example")).toMatchObject({ok:true,usage:{readings:[{label:"x".repeat(40)}]}});
+  });
 });
-
