@@ -166,3 +166,12 @@ it("offers Paseo's custom Claude providers as gateways and imports one without s
   await writeFile(config,"not json");
   expect(await discoverGatewayProviders(store,config)).toEqual([]);
 });
+it("tests a dashboard with no readings yet and returns its page text",async()=>{
+  const {store}=await fixture();
+  await store.change(s=>{s.available.claude=true;});
+  const gateway=await addGateway(store,{label:"Proxy",base_url:"https://gateway.example",api_token:"only-a-test-bearer"});
+  const openTab=()=>async()=>({navigate:async()=>{},close:async()=>{},evaluate:async(expression:string)=>expression.includes("location.href")?JSON.stringify({href:"https://gateway.example/dashboard",ready:"complete"}):expression.includes("innerText")?"Usage\nEST. COST\n$38.20":undefined});
+  const usage={kind:"dashboard" as const,browser:{host:"browser.example",port:9222},pages:["https://gateway.example/dashboard"],readings:[]};
+  expect(await testGatewayUsage(store,gateway.id,usage,{openTab,sleep:async()=>{}})).toEqual({ok:true,plan:null,windows:[],balances:[],error:null,lines:[["Usage","EST. COST","$38.20"]]});
+  await expect(setGatewayUsage(store,gateway.id,usage as never)).rejects.toThrow();
+});
