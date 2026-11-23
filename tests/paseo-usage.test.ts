@@ -311,6 +311,32 @@ describe("gateways in the Usage view", () => {
     expect(discoverAccounts(registry(gateway()), { kind: "global" })).toEqual([]);
     expect(discoverAccounts(registry(gateway({ usage })), UsageScopeSchema.parse({ kind: "session", provider: "claude", model: "opus", env: {} }))).toEqual([]);
   });
+  describe("a session the gateway's dashboard lists", () => {
+    const session = (sessionId?: string, provider = "claude") => ({ kind: "session" as const, provider, env: {}, ...(sessionId ? { sessionId } : {}) });
+    const window = (label: string, usedPercent: number, owner?: string): UsageWindow => ({ id: label, label, usedPercent, windowDurationMins: null, resetsAt: null, ...(owner ? { owner } : {}) });
+    const listed = snapshot({ sessions: { ee702cc2: "two@example.com" }, windows: [window("Weekly · one@example.com", 99, "one@example.com"), window("Weekly · two@example.com", 29, "two@example.com"), window("Weekly · Fable · two@example.com", 5, "two@example.com")] });
+    const state = registry(gateway({ usage }));
+
+    it("names the account the session ran on", () => {
+      expect(discoverAccounts(state, session("ee702cc2-1111-4222-8333-444455556666"), [listed])).toEqual([
+        { key: hashAccountKey("gateway:gw:two@example.com"), label: "two@example.com", harness: "Claude Code", input: { accountId: "gw", owner: "two@example.com" } }]);
+    });
+    it("names none for a session that is not listed, has no id yet, or runs another provider", () => {
+      expect(discoverAccounts(state, session("0a1b2c3d-1111-4222-8333-444455556666"), [listed])).toEqual([]);
+      expect(discoverAccounts(state, session(), [listed])).toEqual([]);
+      expect(discoverAccounts(state, session("ee702cc2-1111-4222-8333-444455556666", "codex"), [listed])).toEqual([]);
+      expect(discoverAccounts(state, session("ee702cc2-1111-4222-8333-444455556666"), [])).toEqual([]);
+    });
+    it("reports only that account's windows, under their own names and without the gateway's amounts", () => {
+      const report = usageReport(listed, "two@example.com");
+      expect(report).toMatchObject({ status: "available", windows: [{ label: "Weekly", usedPct: 29 }, { label: "Weekly · Fable", usedPct: 5 }] });
+      expect(report).not.toHaveProperty("balances");
+    });
+    it("says so when the dashboard shows no limits for the account", () => {
+      expect(usageReport(listed, "three@example.com")).toEqual({ status: "error", error: "The gateway's dashboard shows no limits for this account." });
+      expect(usageReport(snapshot({ status: "unavailable", balances: [], error: "Sign in to the dashboard in the shared browser." }), "two@example.com")).toEqual({ status: "error", error: "Sign in to the dashboard in the shared browser." });
+    });
+  });
   it("reports a balance without windows", () => {
     expect(usageReport(snapshot())).toEqual({ status: "available", planLabel: "Team", windows: [],
       balances: [{ id: "balance", label: "Credits", used: 588, remaining: 412, limit: 1000, unit: "credits" }] });

@@ -7,13 +7,14 @@ export type UsageForm = {
   path: string; used: string; limit: string; remaining: string; usedPercent: string; resetsAt: string; plan: string; unlimited: string;
   unit: UsageUnit; divisor: string; label: string; filePath: string;
   browserHost: string; browserPort: string; pages: string[]; accountTile: string; between: { after: string; before: string }[]; readings: ReadingForm[];
+  sessionId: string; sessionAccount: string; sessionPage: number;
 };
 export const FIELD_NAMES = ["used", "limit", "remaining", "usedPercent", "resetsAt", "plan", "unlimited"] as const;
 export const MAX_PAGES = 4, MAX_READINGS = 12;
 export const emptyReading = (): ReadingForm => ({ label: "", find: "", type: "percent", unit: "credits", page: 0 });
 const blank = (): UsageForm => ({
   kind: "off", path: "", used: "", limit: "", remaining: "", usedPercent: "", resetsAt: "", plan: "", unlimited: "", unit: "credits", divisor: "1", label: "Balance", filePath: "",
-  browserHost: "127.0.0.1", browserPort: "9222", pages: [""], accountTile: "", between: [{ after: "", before: "" }], readings: [emptyReading()],
+  browserHost: "127.0.0.1", browserPort: "9222", pages: [""], accountTile: "", between: [{ after: "", before: "" }], readings: [emptyReading()], sessionId: "", sessionAccount: "", sessionPage: 0,
 });
 
 /** The form for a saved setting. Without one, the dashboard page starts as the gateway's own address. */
@@ -26,12 +27,14 @@ export function formFromUsage(usage: GatewayUsage | undefined, baseUrl?: string)
   if (usage.kind === "file") return { ...form, kind: "file", filePath: usage.path };
   if (usage.kind === "dashboard") return { ...form, kind: "dashboard", browserHost: usage.browser.host, browserPort: String(usage.browser.port), pages: [...usage.pages],
     accountTile: usage.accountTile ?? "", between: usage.pages.map((_, index) => ({ after: usage.between?.[index]?.after ?? "", before: usage.between?.[index]?.before ?? "" })),
-    readings: usage.readings.map(r => ({ label: r.label, find: r.find, type: r.type, unit: r.unit ?? "credits", page: r.page ?? 0 })) };
+    readings: usage.readings.map(r => ({ label: r.label, find: r.find, type: r.type, unit: r.unit ?? "credits", page: r.page ?? 0 })),
+    sessionId: usage.sessions?.id ?? "", sessionAccount: usage.sessions?.account ?? "", sessionPage: usage.sessions?.page ?? 0 };
   const fields = Object.fromEntries(FIELD_NAMES.map(name => [name, usage.fields[name] ?? ""])) as Pick<UsageForm, typeof FIELD_NAMES[number]>;
   return { ...form, ...fields, kind: "endpoint", path: usage.path, unit: usage.unit, divisor: String(usage.divisor), label: usage.label };
 }
 export const bddevForm = (current: UsageForm): UsageForm => ({ ...current, ...formFromUsage(BDDEV_USAGE), browserHost: current.browserHost, browserPort: current.browserPort,
-  pages: current.pages, accountTile: current.accountTile, between: current.between, readings: current.readings, filePath: current.filePath });
+  pages: current.pages, accountTile: current.accountTile, between: current.between, readings: current.readings, filePath: current.filePath,
+  sessionId: current.sessionId, sessionAccount: current.sessionAccount, sessionPage: current.sessionPage });
 
 /**
  * The setting the form describes, or the first reason it does not fit. `null` is Off.
@@ -49,6 +52,8 @@ export function usageFromForm(form: UsageForm, baseUrl: string | undefined, purp
     if (badPage !== -1) return { ok: false, error: `Page ${badPage + 1} needs an https address.` };
     const blank = form.readings.findIndex(reading => !reading.find.trim());
     if (purpose === "save" && blank !== -1) return { ok: false, error: `Enter a caption for reading ${blank + 1}. Press Test to see the page text and pick one.` };
+    const sessionId = form.sessionId.trim(), sessionAccount = form.sessionAccount.trim();
+    if (Boolean(sessionId) !== Boolean(sessionAccount)) return { ok: false, error: "To show a session’s account, enter both column headers of the sessions table." };
     const between = form.pages.map((_, index) => {
       const after = form.between[index]?.after.trim(), before = form.between[index]?.before.trim();
       return { ...(after ? { after } : {}), ...(before ? { before } : {}) };
@@ -59,6 +64,7 @@ export function usageFromForm(form: UsageForm, baseUrl: string | undefined, purp
       ...(between.some(item => item.after || item.before) ? { between } : {}),
       // A reading with no name of its own is shown under its caption.
       readings: form.readings.filter(r => r.find.trim()).map(r => ({ label: r.label.trim() || r.find.trim().slice(0, 40), find: r.find, type: r.type, ...(r.type === "amount" ? { unit: r.unit } : {}), ...(r.page > 0 ? { page: r.page } : {}) })),
+      ...(sessionId ? { sessions: { id: sessionId, account: sessionAccount, ...(form.sessionPage > 0 && form.sessionPage < form.pages.length ? { page: form.sessionPage } : {}) } } : {}),
     };
   } else {
     let path = form.path.trim();
