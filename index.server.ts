@@ -33,7 +33,8 @@ export default function contribute(server:PluginServerContext){
  // An agent whose creation fails never gets that event, so entries expire.
  const startNotes=new Map<string,{note:AccountNote;at:number}>();
  const NOTE_TTL=600_000;
- server.handle(rpc.listAccounts,async(_,{paseo})=>controller.snapshot(paseo));
+ let api:PaseoApi|undefined;
+ server.handle(rpc.listAccounts,async(_,{paseo})=>{api=paseo;return controller.snapshot(paseo);});
  server.handle(rpc.addAccount,async({provider,label},{paseo})=>{await controller.ensureRuntime(paseo);return controller.add(provider,label);});
  server.handle(rpc.addGateway,async(input,{paseo})=>{await controller.ensureRuntime(paseo);return addGateway(controller.store,input);});
  server.handle(rpc.rotateGateway,async({accountId,api_token})=>{await controller.ready;await rotateGateway(controller.store,accountId,api_token);return{};});
@@ -171,16 +172,22 @@ export default function contribute(server:PluginServerContext){
   return{};
  });
  server.handle(rpc.setIntegration,({enabled},{paseo})=>controller.integration(paseo,enabled));
- server.handle(rpc.listUsage,async({visible},{paseo})=>{await controller.ensureRuntime(paseo);return{accounts:await controller.usage.list({visible}),checksOff:!await controller.usage.checksEnabled()};});
+ server.handle(rpc.listUsage,async({visible},{paseo})=>{api=paseo;await controller.ensureRuntime(paseo);return{accounts:await controller.usage.list({visible}),checksOff:!await controller.usage.checksEnabled()};});
  server.handle(rpc.refreshUsage,async({accountId},{paseo})=>{await controller.ensureRuntime(paseo);return{accounts:await controller.usage.refresh(accountId),checksOff:!await controller.usage.checksEnabled()};});
  // Paseo's Usage view lists the managed accounts too; a daemon before 0.11 has no usage sources, and the Accounts screen still shows the same limits.
- registerPaseoUsage(server,controller);
+ // A usage source is asked outside any handler, so it uses the API the last handler was given.
+ registerPaseoUsage(server,controller,async agentId=>{
+  const agent=api?.agents.ref(agentId);
+  if(!agent||!await agent.refresh())return null;
+  return agent.runtimeInfo?.sessionId??null;
+ });
  const removeCreate=server.before("agent.create",({request})=>{
   const model=request.config.model;
   if((request.config.provider!=="claude"&&request.config.provider!=="codex")||!model)return request;
   return {...request,env:{...request.env,[MODEL_ENV]:model}};
  });
  const removeHook=server.before("agent.session_open",async({request},{paseo})=>{
+  api=paseo;
   await controller.ready;
   // Neither hint from the creation reaches the CLI, on this or any later session of the agent.
   const {[MODEL_ENV]:model,[ACCOUNT_ENV]:account,...env}=request.env;
@@ -212,6 +219,7 @@ export default function contribute(server:PluginServerContext){
  // A completed Claude turn is read again only when the last reading already shows the account used up, and not while
  // its paid extra usage has room: Claude then keeps answering past a full 5-hour window.
  const removeTurnEnded=server.on("agent.turn_ended",async({agent,turnId,outcome},{paseo})=>{
+  api=paseo;
   const provider=agent.provider;
   if(provider!=="claude"&&provider!=="codex")return;
   const completed=provider==="claude"&&outcome.kind==="completed";

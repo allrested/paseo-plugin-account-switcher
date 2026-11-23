@@ -54,8 +54,23 @@ export function discoverAccounts(registry: Pick<Registry, "accounts">, scope: Us
   return [...found.values()];
 }
 
-/** Older Paseo versions do not pass the session's id; then no session can be matched. */
-function sessionAccount(registry: Pick<Registry, "accounts">, scope: Extract<UsageScope, { kind: "session" }> & { sessionId?: string }, snapshots: UsageSnapshot[]): UsageAccount[] {
+type SessionScope = Extract<UsageScope, { kind: "session" }> & { sessionId?: string };
+/** Looks up the provider's own session id of an agent; null when the agent has none yet or cannot be asked. */
+export type SessionIdOf = (agentId: string) => Promise<string | null>;
+
+/**
+ * The scope with the session's id. Paseo does not pass it, but the session's environment names its agent
+ * (`PASEO_AGENT_ID`), and the agent's runtime information holds the id.
+ */
+export async function withSessionId(scope: UsageScope, sessionIdOf: SessionIdOf | undefined): Promise<UsageScope> {
+  if (scope.kind !== "session" || (scope as SessionScope).sessionId) return scope;
+  const agentId = scope.env.PASEO_AGENT_ID;
+  const sessionId = agentId && sessionIdOf ? await sessionIdOf(agentId).catch(() => null) : null;
+  return sessionId ? { ...scope, sessionId } as SessionScope : scope;
+}
+
+/** Without the session's id no session can be matched. */
+function sessionAccount(registry: Pick<Registry, "accounts">, scope: SessionScope, snapshots: UsageSnapshot[]): UsageAccount[] {
   const sessionId = scope.sessionId;
   if (!sessionId) return [];
   for (const snapshot of snapshots) {
@@ -143,7 +158,7 @@ export function usageReport(snapshot: UsageSnapshot | undefined, owner?: string)
 }
 
 /** Registers the source; false on a daemon without usage sources (Paseo before 0.11). */
-export function registerPaseoUsage(server: PluginServerContext, controller: UsageController): boolean {
+export function registerPaseoUsage(server: PluginServerContext, controller: UsageController, sessionIdOf?: SessionIdOf): boolean {
   if (typeof server.registerUsageSource !== "function") return false;
   server.registerUsageSource({
     id: SOURCE_ID,
@@ -152,7 +167,11 @@ export function registerPaseoUsage(server: PluginServerContext, controller: Usag
     async discover(scope) {
       await controller.ready;
       // Only a session needs the readings, to find the gateway that lists it.
-      return discoverAccounts(await controller.store.read(), scope, scope.kind === "session" ? await controller.usage.list() : []);
+      if (scope.kind !== "session") return discoverAccounts(await controller.store.read(), scope);
+      const snapshots = await controller.usage.list();
+      // The agent is asked only when some gateway lists sessions at all.
+      const listed = snapshots.some(snapshot => snapshot.sessions && Object.keys(snapshot.sessions).length);
+      return discoverAccounts(await controller.store.read(), listed ? await withSessionId(scope, sessionIdOf) : scope, snapshots);
     },
     // The plugin's cached snapshot: opening the Usage view never costs a provider request.
     async fetch(input) {

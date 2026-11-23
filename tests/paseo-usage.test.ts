@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { hashAccountKey, UsageScopeSchema, type UsageSourceRegistration } from "@getpaseo/plugin/server/usage";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
-import { discoverAccounts, registerPaseoUsage, usageKey, usageReport } from "../server/paseo-usage";
+import { discoverAccounts, registerPaseoUsage, usageKey, usageReport, withSessionId } from "../server/paseo-usage";
 import { parseClaudeUsage, parseCodexUsage } from "../server/usage/parsers";
 import type { StoredAccount } from "../server/store";
 import type { UsageSnapshot, UsageWindow } from "../shared/contracts";
@@ -326,6 +326,18 @@ describe("gateways in the Usage view", () => {
       expect(discoverAccounts(state, session(), [listed])).toEqual([]);
       expect(discoverAccounts(state, session("ee702cc2-1111-4222-8333-444455556666", "codex"), [listed])).toEqual([]);
       expect(discoverAccounts(state, session("ee702cc2-1111-4222-8333-444455556666"), [])).toEqual([]);
+    });
+    it("asks the agent named in the session's environment for the id Paseo did not pass", async () => {
+      const scope = { ...session(), env: { PASEO_AGENT_ID: "agent-1" } };
+      const sessionIdOf = vi.fn(async () => "ee702cc2-1111-4222-8333-444455556666");
+      expect(discoverAccounts(state, await withSessionId(scope, sessionIdOf), [listed])).toMatchObject([{ label: "two@example.com" }]);
+      expect(sessionIdOf).toHaveBeenCalledWith("agent-1");
+      expect(await withSessionId(session("given"), sessionIdOf)).toMatchObject({ sessionId: "given" });
+      expect(await withSessionId(session(), sessionIdOf)).not.toHaveProperty("sessionId");
+      expect(await withSessionId(scope, async () => null)).toBe(scope);
+      expect(await withSessionId(scope, async () => { throw new Error("gone"); })).toBe(scope);
+      expect(await withSessionId({ kind: "global" }, sessionIdOf)).toEqual({ kind: "global" });
+      expect(sessionIdOf).toHaveBeenCalledTimes(1);
     });
     it("reports only that account's windows, under their own names and without the gateway's amounts", () => {
       const report = usageReport(listed, "two@example.com");
