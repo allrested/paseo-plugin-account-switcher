@@ -279,6 +279,12 @@ describe("registerPaseoUsage", () => {
     expect(fake.store.read).toHaveBeenCalled();
     expect(await source?.discover({ kind: "session", provider: "claude", env: {} })).toEqual([]);
   });
+  it("explains an unlisted session, or why the dashboard could not be read", async () => {
+    const { source } = register([snapshot({ accountId: "gw" })]);
+    expect(await source?.fetch({ accountId: "gw", unlisted: true })).toEqual({ status: "error", error: "The gateway's dashboard has not listed this session yet. Its account shows after the next read, once the session has made a request." });
+    const failed = register([{ ...snapshot({ accountId: "gw" }), status: "unavailable", error: "Sign in to the dashboard in the shared browser." }]);
+    expect(await failed.source?.fetch({ accountId: "gw", unlisted: true })).toEqual({ status: "error", error: "Sign in to the dashboard in the shared browser." });
+  });
   it("reports the account's cached snapshot without asking the provider", async () => {
     const { source, fake } = register([snapshot({ accountId: "other", plan: "pro" }), snapshot({ accountId: "work" })]);
     expect(await source?.fetch({ accountId: "work" })).toMatchObject({ status: "available", planLabel: "max" });
@@ -338,6 +344,18 @@ describe("gateways in the Usage view", () => {
       expect(await withSessionId(scope, async () => { throw new Error("gone"); })).toBe(scope);
       expect(await withSessionId({ kind: "global" }, sessionIdOf)).toEqual({ kind: "global" });
       expect(sessionIdOf).toHaveBeenCalledTimes(1);
+    });
+    it("says the account is not confirmed for an unlisted session of an agent on a gateway that lists sessions", async () => {
+      const dashboard = { kind: "dashboard" as const, browser: { host: "127.0.0.1", port: 9222 }, pages: ["https://gw.example/users"], readings: [], sessions: { id: "SESSION ID", account: "ACCOUNT" } };
+      const bound = (usageOf: StoredAccount["usage"]) => ({ ...registry(gateway({ usage: usageOf })), bindings: [{ agentId: "agent-1", provider: "claude", currentAccountId: "gw", launchAccountId: null }] as never });
+      const scope = (sessionId?: string, agentId = "agent-1") => ({ ...session(sessionId), env: { PASEO_AGENT_ID: agentId } });
+      const unlisted = [{ key: hashAccountKey("gateway:gw:unlisted"), label: "Account not confirmed", harness: "Claude Code", input: { accountId: "gw", unlisted: true } }];
+      expect(discoverAccounts(bound(dashboard), scope("0a1b2c3d-1111-4222-8333-444455556666"), [listed])).toEqual(unlisted);
+      expect(discoverAccounts(bound(dashboard), scope(), [listed])).toEqual(unlisted);
+      expect(discoverAccounts(bound(dashboard), scope("ee702cc2-1111-4222-8333-444455556666"), [listed])).toMatchObject([{ label: "two@example.com" }]);
+      expect(discoverAccounts(bound(dashboard), scope(undefined, "agent-2"), [listed])).toEqual([]);
+      expect(discoverAccounts(bound({ ...dashboard, sessions: undefined }), scope(), [listed])).toEqual([]);
+      expect(discoverAccounts(bound(usage), scope(), [listed])).toEqual([]);
     });
     it("reports only that account's windows, under their own names and without the gateway's amounts", () => {
       const report = usageReport(listed, "two@example.com");
