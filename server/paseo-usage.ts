@@ -9,12 +9,15 @@ const SOURCE_ID = "account-switcher";
 const KEY_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
 // A store locator for `fetch`, never a credential.
 // `owner` narrows a gateway's reading to one of the accounts its dashboard shows: the one a session ran on.
-const InputSchema = z.object({ accountId: z.string().min(1), owner: z.string().min(1).optional() });
+// `unlisted` is a session on a gateway whose dashboard does not list it yet, so its account is not known.
+const InputSchema = z.object({ accountId: z.string().min(1), owner: z.string().min(1).optional(), unlisted: z.literal(true).optional() });
+type Listed = Pick<Registry, "accounts"> & Partial<Pick<Registry, "bindings">>;
+const UNLISTED = "The gateway's dashboard has not listed this session yet. Its account shows after the next read, once the session has made a request.";
 
 /** The part of AccountController this source reads; the controller satisfies it. */
 export interface UsageController {
   ready: Promise<void>;
-  store: { read(): Promise<Pick<Registry, "accounts">> };
+  store: { read(): Promise<Listed> };
   usage: { list(): Promise<UsageSnapshot[]> };
 }
 
@@ -33,7 +36,7 @@ export function usageKey(provider: Provider, identityKey: string): string {
  * The session scope is also left to the built-in source: the account profile in an agent's environment (see session-env.ts) already points it at the right login.
  * The one exception is a session a gateway's dashboard lists: it gets the account the gateway ran it on, which no login on this host can tell.
  */
-export function discoverAccounts(registry: Pick<Registry, "accounts">, scope: UsageScope, snapshots: UsageSnapshot[] = []): UsageAccount[] {
+export function discoverAccounts(registry: Listed, scope: UsageScope, snapshots: UsageSnapshot[] = []): UsageAccount[] {
   if (scope.kind !== "global") return sessionAccount(registry, scope, snapshots);
   const systemIdentity = (provider: Provider) => registry.accounts.find(a => a.source === "system" && a.provider === provider)?.identityKey ?? null;
   const found = new Map<string, UsageAccount>();
@@ -69,19 +72,28 @@ export async function withSessionId(scope: UsageScope, sessionIdOf: SessionIdOf 
   return sessionId ? { ...scope, sessionId } as SessionScope : scope;
 }
 
-/** Without the session's id no session can be matched. */
-function sessionAccount(registry: Pick<Registry, "accounts">, scope: SessionScope, snapshots: UsageSnapshot[]): UsageAccount[] {
+/**
+ * The account a gateway's dashboard names for the session. A session the dashboard does not list, or one with no id yet, gets
+ * "Account not confirmed" when its agent runs on a gateway that lists sessions: the gateway can move a session to another
+ * account, so any other answer would be a guess.
+ */
+function sessionAccount(registry: Listed, scope: SessionScope, snapshots: UsageSnapshot[]): UsageAccount[] {
   const sessionId = scope.sessionId;
-  if (!sessionId) return [];
-  for (const snapshot of snapshots) {
+  for (const snapshot of sessionId ? snapshots : []) {
     const account = registry.accounts.find(candidate => candidate.id === snapshot.accountId);
     if (!account || !isGateway(account) || account.provider !== scope.provider) continue;
-    const prefix = Object.keys(snapshot.sessions ?? {}).find(start => sessionId.startsWith(start));
+    const prefix = Object.keys(snapshot.sessions ?? {}).find(start => sessionId!.startsWith(start));
     if (!prefix) continue;
     const owner = snapshot.sessions![prefix];
     return [{ key: hashAccountKey(`gateway:${account.id}:${owner}`), label: owner, harness: cliName[account.provider], input: { accountId: account.id, owner } }];
   }
-  return [];
+  const agentId = scope.env.PASEO_AGENT_ID;
+  const binding = agentId ? registry.bindings?.find(candidate => candidate.agentId === agentId && candidate.provider === scope.provider) : undefined;
+  const accountId = binding?.launchAccountId ?? binding?.currentAccountId;
+  // An agent the plugin never bound runs on the host's own login.
+  const account = registry.accounts.find(candidate => candidate.provider === scope.provider && (accountId ? candidate.id === accountId : Boolean(agentId) && candidate.source === "system"));
+  if (!account || !isGateway(account) || account.usage?.kind !== "dashboard" || !account.usage.sessions) return [];
+  return [{ key: hashAccountKey(`gateway:${account.id}:unlisted`), label: "Account not confirmed", harness: cliName[account.provider], input: { accountId: account.id, unlisted: true } }];
 }
 
 // Without a reported duration the Codex collector labels a window by its response slot ("codex · primary"). A slot says where the window sat in the response, not which quota it is.
@@ -175,8 +187,13 @@ export function registerPaseoUsage(server: PluginServerContext, controller: Usag
     },
     // The plugin's cached snapshot: opening the Usage view never costs a provider request.
     async fetch(input) {
-      const { accountId, owner } = InputSchema.parse(input);
+      const { accountId, owner, unlisted } = InputSchema.parse(input);
       const snapshots = await controller.usage.list();
+      if (unlisted) {
+        // While the dashboard itself cannot be read, that reason is the one worth showing.
+        const snapshot = snapshots.find(candidate => candidate.accountId === accountId);
+        return { status: "error", error: snapshot?.status === "unavailable" && snapshot.error ? snapshot.error : UNLISTED };
+      }
       return usageReport(snapshots.find(snapshot => snapshot.accountId === accountId), owner);
     },
   });
