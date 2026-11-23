@@ -354,6 +354,10 @@ describe("gateways in the Usage view", () => {
       expect(discoverAccounts(bound(dashboard), scope(), [listed])).toEqual(unlisted);
       expect(discoverAccounts(bound(dashboard), scope("ee702cc2-1111-4222-8333-444455556666"), [listed])).toMatchObject([{ label: "two@example.com" }]);
       expect(discoverAccounts(bound(dashboard), scope(undefined, "agent-2"), [listed])).toEqual([]);
+      // An agent with no binding runs on the host's login, which may itself be a gateway.
+      const host = { accounts: [account({ id: "gw", source: "system", baseUrl: "https://gw.example", usage: dashboard })], bindings: [] };
+      expect(discoverAccounts(host, scope(undefined, "agent-2"), [listed])).toEqual(unlisted);
+      expect(discoverAccounts(host, session(), [listed])).toEqual([]);
       expect(discoverAccounts(bound({ ...dashboard, sessions: undefined }), scope(), [listed])).toEqual([]);
       expect(discoverAccounts(bound(usage), scope(), [listed])).toEqual([]);
     });

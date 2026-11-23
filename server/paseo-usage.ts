@@ -90,7 +90,8 @@ function sessionAccount(registry: Listed, scope: SessionScope, snapshots: UsageS
   const agentId = scope.env.PASEO_AGENT_ID;
   const binding = agentId ? registry.bindings?.find(candidate => candidate.agentId === agentId && candidate.provider === scope.provider) : undefined;
   const accountId = binding?.launchAccountId ?? binding?.currentAccountId;
-  const account = accountId ? registry.accounts.find(candidate => candidate.id === accountId && candidate.provider === scope.provider) : undefined;
+  // An agent the plugin never bound runs on the host's own login.
+  const account = registry.accounts.find(candidate => candidate.provider === scope.provider && (accountId ? candidate.id === accountId : Boolean(agentId) && candidate.source === "system"));
   if (!account || !isGateway(account) || account.usage?.kind !== "dashboard" || !account.usage.sessions) return [];
   return [{ key: hashAccountKey(`gateway:${account.id}:unlisted`), label: "Account not confirmed", harness: cliName[account.provider], input: { accountId: account.id, unlisted: true } }];
 }
