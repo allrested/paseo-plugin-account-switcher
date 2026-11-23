@@ -84,6 +84,12 @@ export function GatewayUsageForm({ theme, account, host: paseoHost, onChanged, o
         </View>
       </View>)}
       {form.readings.length < MAX_READINGS ? <View style={row}><Button theme={theme} disabled={busy} onPress={() => { setFocused(form.readings.length); edit({ readings: [...form.readings, emptyReading()] }); }}>Add reading</Button></View> : null}
+      <Text style={muted(theme)}>If a page has a table of sessions, enter the headers of its session ID and account columns. An agent’s usage in Paseo then shows the account its session ran on.</Text>
+      <View style={row}>
+        <Field theme={theme} autoCorrect={false} placeholder="Session ID column (optional)" accessibilityLabel="Session ID column" value={form.sessionId} onChangeText={sessionId => change({ sessionId })} />
+        <Field theme={theme} autoCorrect={false} placeholder="Account column (optional)" accessibilityLabel="Account column" value={form.sessionAccount} onChangeText={sessionAccount => change({ sessionAccount })} />
+      </View>
+      {form.pages.length > 1 ? <Segmented theme={theme} label="Sessions table page" value={String(Math.min(form.sessionPage, form.pages.length - 1))} options={pageOptions} disabled={busy} onChange={page => change({ sessionPage: Number(page) })} /> : null}
     </View> : null}
     {form.kind === "file" ? <View style={{ gap: 8 }}>
       <Text style={muted(theme)}>A file on this host that another tool keeps up to date, holding a fetchedAt time and a Paseo usage report. A reading older than 30 minutes shows as stale.</Text>
@@ -96,6 +102,7 @@ export function GatewayUsageForm({ theme, account, host: paseoHost, onChanged, o
       {result.plan ? <Text style={muted(theme)}>{result.plan}</Text> : null}
       {result.windows.map(window => <Text key={window.id} style={body(theme)}>{`${window.label}: ${percent(window.usedPercent)} used`}</Text>)}
       {result.balances.map(balance => <QuotaBalanceRow key={balance.id} theme={theme} balance={balance} />)}
+      {result.sessions !== undefined ? <Text style={body(theme)}>{`Sessions listed: ${result.sessions}`}</Text> : null}
       {form.kind === "dashboard" && result.lines?.length ? <View style={{ gap: 2 }}>
         <Text style={muted(theme)}>Page text. Press a line to use it as the caption of reading {Math.min(focused, form.readings.length - 1) + 1}.</Text>
         {result.lines.map((lines, page) => <View key={page} style={{ gap: 0 }}>

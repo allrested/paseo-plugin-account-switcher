@@ -37,6 +37,15 @@ describe("usage dashboard", () => {
     expect(reading.lines).toHaveLength(2);
     expect(reading.lines![1]).toContain("EST. COST");
   });
+  it("reads the sessions table of the page the setting names", async () => {
+    const b = browser();
+    const table = `${fixture("usage.txt")}\nSESSION ID\tMODEL\tACCOUNT\nee702cc2…\tOpus\ttwo@example.com\n`;
+    const openTab = async () => new FakeTab((expr, t) => expr === READ_STATE ? pageState(t.url) : expr === BODY_TEXT ? (t.url === LIMITS ? fixture("limits.txt") : table) : undefined);
+    const reading = await readDashboardUsage("gw", setting({ sessions: { page: 1, id: "Session ID", account: "Account" } }), { ...deps(b), openTab: () => openTab });
+    expect(reading.sessions).toEqual({ ee702cc2: "two@example.com" });
+    expect(reading.windows.map(w => w.owner)).toEqual(["one@example.com", "two@example.com"]);
+    expect((await readDashboardUsage("other", setting(), deps(b))).sessions).toBeUndefined();
+  });
   it("cuts the returned page text to 300 lines a page", async () => {
     const long = Array.from({ length: 500 }, (_, i) => `line ${i}`).join("\n") + "\nEST. COST\n$1.00";
     const openTab = async () => new FakeTab((expr, t) => expr === READ_STATE ? pageState(t.url) : long);

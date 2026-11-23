@@ -2,7 +2,7 @@ import type { GatewayUsage } from "../../../shared/contracts";
 import { GatewayUsageError, type GatewayReading } from "../gateway-reading";
 import { cdpTabOpener, type OpenTab } from "./cdp";
 import { BODY_TEXT, loadPageText, SIGN_IN_NEEDED } from "./pages";
-import { extractReadings, pageLines } from "./rules";
+import { extractReadings, pageLines, sessionAccounts } from "./rules";
 
 type Dashboard = Extract<GatewayUsage, { kind: "dashboard" }>;
 export type DashboardReading = GatewayReading & { lines?: string[][] };
@@ -58,6 +58,7 @@ async function read(usage: Dashboard, deps: DashboardDependencies): Promise<Dash
       }
       reading.windows.push(...found.windows); reading.balances.push(...found.balances); missing.push(...found.missing);
       reading.lines!.push(lines.slice(0, MAX_LINES));
+      if (usage.sessions && (usage.sessions.page ?? 0) === index) reading.sessions = sessionAccounts(text, usage.sessions);
     }
     if (missing.length) throw new DashboardMissingError(missing[0], reading);
     return reading;

@@ -11,7 +11,7 @@ export type QuotaAccount = { id: string; provider: Provider; home: string; comma
   /** Set for a Claude gateway that has a usage reader. It has no CLI command, and `identityKey` is the fixed `gateway:<id>`. */
   gateway?: { usage: GatewayUsage; credentials: () => Promise<GatewayCredentials> } };
 export { readCredentialVersion } from "./credentials";
-export type CollectedUsage = { identityKey: string | null; plan: string | null; windows: UsageWindow[]; models?: string[] | null; usageAllowed?: boolean | null; balances?: UsageBalance[]; fetchedAt?: string };
+export type CollectedUsage = { identityKey: string | null; plan: string | null; windows: UsageWindow[]; models?: string[] | null; usageAllowed?: boolean | null; balances?: UsageBalance[]; fetchedAt?: string; sessions?: Record<string, string> };
 export type FetchUsage = (account: QuotaAccount, signal?: AbortSignal) => Promise<CollectedUsage>;
 export type AccountReadOptions = { verifyAccountId?: string };
 export type UsageOptions = { getAccounts: (input?: AccountReadOptions) => Promise<QuotaAccount[]>; fetchUsage?: FetchUsage; cachePath?: string; now?: () => number; checksEnabled?: () => Promise<boolean> };
@@ -178,7 +178,7 @@ export function createUsageService(options: UsageOptions) {
         if(requested&&account.credentialVersion!==verified.credentialVersion&&(!identityProven(account)||!identityProven(verified)||result?.identityKey!==account.identityKey))failure??=new UsageError("unavailable","response_identity_unverified");
         const checkedAt = new Date(now()).toISOString();
         if (result && !failure) {
-          const snapshot: UsageSnapshot = {accountId:account.id,provider:account.provider,status:"ok",plan:result.plan,windows:result.windows,models:result.models??null,usageAllowed:result.usageAllowed??null,fetchedAt:result.fetchedAt??checkedAt,checkedAt,nextRetryAt:null,error:null,...(account.gateway?{balances:result.balances??[]}:{})};
+          const snapshot: UsageSnapshot = {accountId:account.id,provider:account.provider,status:"ok",plan:result.plan,windows:result.windows,models:result.models??null,usageAllowed:result.usageAllowed??null,fetchedAt:result.fetchedAt??checkedAt,checkedAt,nextRetryAt:null,error:null,...(account.gateway?{balances:result.balances??[]}:{}),...(result.sessions?{sessions:result.sessions}:{})};
           entry.snapshot=snapshot;entry.success=account.identityKey===null?undefined:snapshot;entry.attempts=0;entry.retryAt=0;
         } else {
           const error=failure??new UsageError("unavailable","request_failed");
@@ -187,7 +187,7 @@ export function createUsageService(options: UsageOptions) {
           entry.retryAt=now()+backoff;
           if (error.status==="needs_auth") entry.success=undefined;
           const previous=entry.success;
-          entry.snapshot={accountId:account.id,provider:account.provider,status:error.status==="needs_auth"?"needs_auth":previous?"stale":"unavailable",plan:previous?.plan??null,windows:previous?.windows??[],models:previous?.models??null,usageAllowed:previous?.usageAllowed??null,fetchedAt:previous?.fetchedAt??null,checkedAt,nextRetryAt:new Date(entry.retryAt).toISOString(),error:error.message,...(account.gateway?{balances:previous?.balances??[]}:{})};
+          entry.snapshot={accountId:account.id,provider:account.provider,status:error.status==="needs_auth"?"needs_auth":previous?"stale":"unavailable",plan:previous?.plan??null,windows:previous?.windows??[],models:previous?.models??null,usageAllowed:previous?.usageAllowed??null,fetchedAt:previous?.fetchedAt??null,checkedAt,nextRetryAt:new Date(entry.retryAt).toISOString(),error:error.message,...(account.gateway?{balances:previous?.balances??[]}:{}),...(previous?.sessions?{sessions:previous.sessions}:{})};
         }
         await persist();
       } finally { release(); }

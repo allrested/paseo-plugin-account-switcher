@@ -39,7 +39,9 @@ const dashboardUsage = (minReadings: number) => z.object({
       label: z.string().trim().min(1).max(40), find: z.string().trim().min(1).max(120), type: z.enum(["percent", "amount"]),
       unit: UsageUnitSchema.optional(), page: z.number().int().min(0).max(3).optional(),
     }).refine(r => r.type !== "amount" || Boolean(r.unit), "Choose a unit for an amount.")).min(minReadings).max(12),
-  }).refine(d => d.readings.every(r => (r.page ?? 0) < d.pages.length), "A reading names a page that is not listed.");
+    // A table on one page that lists sessions: the column with each session's id and the column naming the account it ran on.
+    sessions: z.object({ page: z.number().int().min(0).max(3).optional(), id: z.string().trim().min(1).max(120), account: z.string().trim().min(1).max(120) }).optional(),
+  }).refine(d => d.readings.every(r => (r.page ?? 0) < d.pages.length) && (d.sessions?.page ?? 0) < d.pages.length, "A reading names a page that is not listed.");
 export const GatewayUsageSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("endpoint"),
@@ -96,6 +98,8 @@ export const UsageWindowSchema = z.object({
   detail: z.string().nullable().optional(),
   // What a full window stops: every request of the account, one model's requests, or extra paid usage.
   scope: z.enum(["account", "model", "spend"]).optional(),
+  // On a gateway's dashboard that shows several accounts: the account this window belongs to.
+  owner: z.string().optional(),
 });
 export type UsageWindow = z.infer<typeof UsageWindowSchema>;
 // An amount instead of a percentage: credits, money, requests or tokens used and left.
@@ -110,6 +114,8 @@ export const UsageSnapshotSchema = z.object({
   plan: z.string().nullable(), windows: z.array(UsageWindowSchema),
   // Amounts a gateway reports. Absent on subscriptions and on snapshots saved before gateways had usage.
   balances: z.array(UsageBalanceSchema).optional(),
+  // From a gateway's dashboard: the start of each listed session's id, and the account that session ran on.
+  sessions: z.record(z.string(), z.string()).optional(),
   // Model IDs the account's plan offers; null or absent when the provider does not list them.
   models: z.array(z.string()).nullable().optional(),
   // The provider's own verdict that ordinary usage is allowed (Codex `ordinaryUsageAllowed`); null when not reported.
@@ -136,7 +142,7 @@ export const GatewayInput = z.object({
 export const addGateway = defineRpc({ name: "claude.gateway-add", input: GatewayInput, output: AccountSchema });
 export const rotateGateway = defineRpc({ name: "claude.gateway-rotate", input: AccountId.extend({ api_token: GatewayInput.shape.api_token }), output: Empty });
 export const setGatewayUsage = defineRpc({ name: "claude.gateway-usage-set", input: AccountId.extend({ usage: GatewayUsageSchema.nullable() }), output: Empty });
-export const GatewayUsageTestSchema = z.object({ ok: z.boolean(), plan: z.string().nullable(), windows: z.array(UsageWindowSchema), balances: z.array(UsageBalanceSchema), error: z.string().nullable() , lines: z.array(z.array(z.string())).optional() });
+export const GatewayUsageTestSchema = z.object({ ok: z.boolean(), plan: z.string().nullable(), windows: z.array(UsageWindowSchema), balances: z.array(UsageBalanceSchema), error: z.string().nullable() , lines: z.array(z.array(z.string())).optional(), sessions: z.number().optional() });
 export type GatewayUsageTest = z.infer<typeof GatewayUsageTestSchema>;
 export const testGatewayUsage = defineRpc({ name: "claude.gateway-usage-test", input: AccountId.extend({ usage: GatewayUsageProbeSchema }), output: GatewayUsageTestSchema });
 export const GatewayProviderSchema = z.object({ provider: z.string(), label: z.string(), baseUrl: z.string() });

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { extractReadings, pageLines, parseValue } from "../server/usage/dashboard/rules";
+import { extractReadings, pageLines, parseValue, sessionAccounts } from "../server/usage/dashboard/rules";
 
 const fixture = (name: string) => readFileSync(new URL(`./fixtures/dashboard/${name}`, import.meta.url), "utf8");
 const now = new Date("2026-11-22T00:00:00.000Z");
@@ -10,8 +10,8 @@ describe("dashboard page rules", () => {
   it("reads a repeated caption once per account, inside the chosen section", () => {
     const lines = pageLines(fixture("limits.txt"), { after: "team-a", before: "team-b" });
     expect(extractReadings(lines, [weekly], now)).toEqual({ balances: [], missing: [], windows: [
-      { id: "weekly-1", label: "Weekly · one@example.com", usedPercent: 99, windowDurationMins: null, resetsAt: "2026-11-23T18:00:00.000Z" },
-      { id: "weekly-2", label: "Weekly · two@example.com", usedPercent: 29, windowDurationMins: null, resetsAt: "2026-11-25T19:00:00.000Z" }] });
+      { id: "weekly-1", label: "Weekly · one@example.com", usedPercent: 99, windowDurationMins: null, resetsAt: "2026-11-23T18:00:00.000Z", owner: "one@example.com" },
+      { id: "weekly-2", label: "Weekly · two@example.com", usedPercent: 29, windowDurationMins: null, resetsAt: "2026-11-25T19:00:00.000Z", owner: "two@example.com" }] });
   });
   it("keeps the plain name for a caption that occurs once", () => {
     const lines = pageLines(fixture("limits.txt"), { after: "team-b" });
@@ -59,5 +59,11 @@ describe("dashboard page rules", () => {
   it("returns no lines when the section's start is not on the page", () => {
     expect(pageLines("a\nb", { after: "missing" })).toEqual([]);
     expect(pageLines(" a \n\n b ")).toEqual(["a", "b"]);
+  });
+  it("reads the sessions table by its two column headers", () => {
+    const table = "SESSIONS\n\n3\nSESSION ID\tMODEL\tACCOUNT\tREQUESTS\nee702cc2…\tOpus\tone@example.com\t12\nnot an id\tOpus\ttwo@example.com\t1\n582fedc7-aaaa\tHaiku\t two@example.com \t3\n0a1b2c3d…\tHaiku\t\t3\nData from the gateway\nffffffff…\tOpus\tone@example.com\t1";
+    expect(sessionAccounts(table, { id: "session id", account: "Account" })).toEqual({ ee702cc2: "one@example.com", "582fedc7-aaaa": "two@example.com" });
+    expect(sessionAccounts(table, { id: "Session", account: "Account" })).toEqual({});
+    expect(sessionAccounts("REQUESTS\n\n12", { id: "SESSION ID", account: "ACCOUNT" })).toEqual({});
   });
 });

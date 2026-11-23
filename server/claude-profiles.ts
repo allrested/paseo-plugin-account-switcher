@@ -187,7 +187,7 @@ export async function testGatewayUsage(store: AccountStore, accountId: string, u
   try {
     // A test is the user asking now: it is not held back by the once-a-minute spacing of dashboard reads.
     const reading: DashboardReading = await readGatewayUsage(parsed, () => gatewayCredentials(store, account), { ...deps, accountId: `test:${accountId}`, force: true });
-    return { ok: true, plan: reading.plan, windows: reading.windows, balances: reading.balances, error: null, ...(reading.lines ? { lines: reading.lines } : {}) };
+    return { ok: true, plan: reading.plan, windows: reading.windows, balances: reading.balances, error: null, ...(reading.lines ? { lines: reading.lines } : {}), ...(reading.sessions ? { sessions: Object.keys(reading.sessions).length } : {}) };
   } catch (error) {
     const partial = error instanceof DashboardMissingError ? error.partial : null;
     return { ok: false, plan: null, windows: partial?.windows ?? [], balances: partial?.balances ?? [], error: error instanceof GatewayUsageError ? error.message : "The gateway's usage could not be read.", ...(partial?.lines ? { lines: partial.lines } : {}) };

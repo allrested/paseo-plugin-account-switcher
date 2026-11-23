@@ -121,6 +121,11 @@ describe("usage dashboard form",()=>{
     const simple={kind:"dashboard" as const,browser:{host:"127.0.0.1",port:9222},pages:["https://gw.example/dashboard"],readings:[{label:"Cost",find:"EST. COST",type:"amount" as const,unit:"credits" as const}]};
     expect(usageFromForm(formFromUsage(simple),"https://gw.example")).toEqual({ok:true,usage:simple});
   });
+  it("round-trips the sessions table and wants both of its columns",()=>{
+    const listed={...saved,sessions:{page:1,id:"SESSION ID",account:"ACCOUNT"}};
+    expect(usageFromForm(formFromUsage(listed),"https://gw.example")).toEqual({ok:true,usage:listed});
+    expect(usageFromForm({...formFromUsage(saved),sessionId:"SESSION ID"},"https://gw.example")).toEqual({ok:false,error:"To show a session’s account, enter both column headers of the sessions table."});
+  });
   it("starts with the shared browser's address, the gateway's address as the page and one empty reading",()=>{
     const {render}=mount();
     choice(render(),"Usage").props.onChange!("dashboard");

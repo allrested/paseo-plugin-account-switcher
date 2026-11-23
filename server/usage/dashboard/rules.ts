@@ -77,9 +77,32 @@ export function extractReadings(lines: string[], rules: Rule[], now: Date): { wi
       const many = found.length > 1;
       const id = many ? `${slug(rule.label)}-${index + 1}` : slug(rule.label);
       const label = many ? `${rule.label} · ${named ? item.owner : index + 1}` : rule.label;
-      if (rule.type === "percent") windows.push({ id, label, usedPercent: item.value, windowDurationMins: null, resetsAt: resetTime(lines.slice(item.at + 1, item.at + 3), now) });
+      if (rule.type === "percent") windows.push({ id, label, usedPercent: item.value, windowDurationMins: null, resetsAt: resetTime(lines.slice(item.at + 1, item.at + 3), now), ...(many && named ? { owner: item.owner! } : {}) });
       else balances.push({ id, label, used: item.value, remaining: null, limit: null, unit: rule.unit ?? "credits", detail: null });
     });
   }
   return { windows, balances, missing };
+}
+
+/** Where a page lists sessions: the header text of the column with the session id and of the column with the account. */
+export type SessionTable = { id: string; account: string };
+const MAX_SESSIONS = 500;
+
+/**
+ * The sessions a page lists, as the start of each session's id and the account it ran on. The table is the rows of
+ * tab-separated cells under the header row that names both columns. An id the page cuts short ("ee702cc2…") is kept
+ * as the part shown; a row without at least eight id characters or without an account is left out.
+ */
+export function sessionAccounts(text: string, table: SessionTable): Record<string, string> {
+  const rows = text.split("\n").map(line => line.split("\t").map(cell => cell.trim()));
+  const header = rows.findIndex(cells => cells.some(cell => fold(cell) === fold(table.id)) && cells.some(cell => fold(cell) === fold(table.account)));
+  const found: Record<string, string> = {};
+  if (header === -1) return found;
+  const id = rows[header].findIndex(cell => fold(cell) === fold(table.id)), account = rows[header].findIndex(cell => fold(cell) === fold(table.account));
+  for (const cells of rows.slice(header + 1)) {
+    if (cells.length < 2 || Object.keys(found).length >= MAX_SESSIONS) break;
+    const prefix = /^[A-Za-z0-9_-]{8,}/.exec(cells[id] ?? "")?.[0], owner = cells[account];
+    if (prefix && owner) found[prefix] = owner.slice(0, 200);
+  }
+  return found;
 }

@@ -8,7 +8,8 @@ import type { Registry } from "./store";
 const SOURCE_ID = "account-switcher";
 const KEY_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
 // A store locator for `fetch`, never a credential.
-const InputSchema = z.object({ accountId: z.string().min(1) });
+// `owner` narrows a gateway's reading to one of the accounts its dashboard shows: the one a session ran on.
+const InputSchema = z.object({ accountId: z.string().min(1), owner: z.string().min(1).optional() });
 
 /** The part of AccountController this source reads; the controller satisfies it. */
 export interface UsageController {
@@ -30,9 +31,10 @@ export function usageKey(provider: Provider, identityKey: string): string {
 /**
  * Managed accounts for the Usage view's global list. The system account is left to Paseo's built-in source, and so is any managed account signed in as that same login.
  * The session scope is also left to the built-in source: the account profile in an agent's environment (see session-env.ts) already points it at the right login.
+ * The one exception is a session a gateway's dashboard lists: it gets the account the gateway ran it on, which no login on this host can tell.
  */
-export function discoverAccounts(registry: Pick<Registry, "accounts">, scope: UsageScope): UsageAccount[] {
-  if (scope.kind !== "global") return [];
+export function discoverAccounts(registry: Pick<Registry, "accounts">, scope: UsageScope, snapshots: UsageSnapshot[] = []): UsageAccount[] {
+  if (scope.kind !== "global") return sessionAccount(registry, scope, snapshots);
   const systemIdentity = (provider: Provider) => registry.accounts.find(a => a.source === "system" && a.provider === provider)?.identityKey ?? null;
   const found = new Map<string, UsageAccount>();
   for (const account of registry.accounts) {
@@ -50,6 +52,21 @@ export function discoverAccounts(registry: Pick<Registry, "accounts">, scope: Us
     found.set(key, { key, label: account.label, harness: cliName[account.provider], input: { accountId: account.id } });
   }
   return [...found.values()];
+}
+
+/** Older Paseo versions do not pass the session's id; then no session can be matched. */
+function sessionAccount(registry: Pick<Registry, "accounts">, scope: Extract<UsageScope, { kind: "session" }> & { sessionId?: string }, snapshots: UsageSnapshot[]): UsageAccount[] {
+  const sessionId = scope.sessionId;
+  if (!sessionId) return [];
+  for (const snapshot of snapshots) {
+    const account = registry.accounts.find(candidate => candidate.id === snapshot.accountId);
+    if (!account || !isGateway(account) || account.provider !== scope.provider) continue;
+    const prefix = Object.keys(snapshot.sessions ?? {}).find(start => sessionId.startsWith(start));
+    if (!prefix) continue;
+    const owner = snapshot.sessions![prefix];
+    return [{ key: hashAccountKey(`gateway:${account.id}:${owner}`), label: owner, harness: cliName[account.provider], input: { accountId: account.id, owner } }];
+  }
+  return [];
 }
 
 // Without a reported duration the Codex collector labels a window by its response slot ("codex · primary"). A slot says where the window sat in the response, not which quota it is.
@@ -93,7 +110,19 @@ function withUniqueIds(windows: PaseoWindow[]): PaseoWindow[] {
   });
 }
 
-export function usageReport(snapshot: UsageSnapshot | undefined): UsageReport {
+/** A gateway's reading for one of the accounts its dashboard shows: that account's windows under their own names, and no amounts, which belong to the gateway as a whole. */
+function ownedBy(snapshot: UsageSnapshot, owner: string): UsageSnapshot {
+  const suffix = ` · ${owner}`;
+  const windows = snapshot.windows.filter(window => window.owner === owner).map(window => ({ ...window, label: window.label.endsWith(suffix) ? window.label.slice(0, -suffix.length) : window.label }));
+  return { ...snapshot, windows, balances: [] };
+}
+
+export function usageReport(snapshot: UsageSnapshot | undefined, owner?: string): UsageReport {
+  if (snapshot && owner) {
+    const owned = ownedBy(snapshot, owner);
+    if (snapshot.status !== "unavailable" && !owned.windows.length) return { status: "error", error: "The gateway's dashboard shows no limits for this account." };
+    return usageReport(owned);
+  }
   if (snapshot?.status === "needs_auth") return { status: "error", error: "Needs sign-in in Account Switcher." };
   // Only a gateway's snapshot carries `balances`, and its error is already a reason written for the user.
   if (snapshot?.status === "unavailable" && snapshot.balances && snapshot.error) return { status: "error", error: snapshot.error };
@@ -122,13 +151,14 @@ export function registerPaseoUsage(server: PluginServerContext, controller: Usag
     input: InputSchema,
     async discover(scope) {
       await controller.ready;
-      return discoverAccounts(await controller.store.read(), scope);
+      // Only a session needs the readings, to find the gateway that lists it.
+      return discoverAccounts(await controller.store.read(), scope, scope.kind === "session" ? await controller.usage.list() : []);
     },
     // The plugin's cached snapshot: opening the Usage view never costs a provider request.
     async fetch(input) {
-      const { accountId } = InputSchema.parse(input);
+      const { accountId, owner } = InputSchema.parse(input);
       const snapshots = await controller.usage.list();
-      return usageReport(snapshots.find(snapshot => snapshot.accountId === accountId));
+      return usageReport(snapshots.find(snapshot => snapshot.accountId === accountId), owner);
     },
   });
   return true;
